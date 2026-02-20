@@ -33,6 +33,12 @@ _FLASH_YELLOW = "#713f12"   # duplicate tap
 _BASE_BG      = "#1a1a2e"   # default background
 _FLASH_MS     = 2500         # flash duration in milliseconds
 
+# ── Reader watchdog ───────────────────────────────────────────────────────────
+# Show a warning banner if no card tap is received within this period while
+# a session is active.  HID USB readers emulate a keyboard; we cannot detect
+# hardware disconnection directly, so we use inactivity as a proxy.
+_READER_TIMEOUT_MS = 300_000   # 5 minutes
+
 
 class AttendanceTab(ctk.CTkFrame):
     """The Attendance tab mounted inside the main App tabview."""
@@ -41,7 +47,8 @@ class AttendanceTab(ctk.CTkFrame):
         super().__init__(parent, fg_color=_BASE_BG, corner_radius=0)
         self._app = root
         self._session_id: Optional[int] = None
-        self._flash_job: Optional[str] = None   # after() job id
+        self._flash_job: Optional[str] = None        # after() job id
+        self._reader_watchdog_job: Optional[str] = None  # watchdog after() id
 
         self._build_ui()
         self._refresh_sections()
@@ -117,6 +124,33 @@ class AttendanceTab(ctk.CTkFrame):
             text_color="#6b7280",
         )
         self._session_label.pack(side="left", padx=(0, 16))
+
+        # ── Reader warning banner (hidden until watchdog fires) ──────────────
+        self._reader_warning = ctk.CTkFrame(
+            self, fg_color="#451a03", corner_radius=8, height=44,
+        )
+        # Not packed initially — shown only when watchdog fires
+        self._reader_warning.pack_propagate(False)
+
+        warn_inner = ctk.CTkFrame(self._reader_warning, fg_color="transparent")
+        warn_inner.pack(fill="both", expand=True)
+
+        ctk.CTkLabel(
+            warn_inner,
+            text="⚠  RFID reader not detected — no card tap received"
+                 " in the last 5 minutes.",
+            font=ctk.CTkFont(size=13),
+            text_color="#fed7aa",
+        ).pack(side="left", padx=14, pady=0)
+
+        ctk.CTkButton(
+            warn_inner,
+            text="Manual Entry…",
+            width=130, height=30,
+            fg_color="#92400e", hover_color="#b45309",
+            font=ctk.CTkFont(size=12),
+            command=self._open_manual_entry,
+        ).pack(side="right", padx=10)
 
         # ── Feedback banner (flash area) ─────────────────────────────────────
         self._banner = ctk.CTkFrame(self, fg_color=_BASE_BG, corner_radius=8, height=70)
@@ -221,6 +255,7 @@ class AttendanceTab(ctk.CTkFrame):
             )
             self._refresh_student_list()
             self._rfid_entry.focus_set()
+            self._start_reader_watchdog()
             log_info(f"AttendanceTab: session {self._session_id} started.")
         else:
             self._show_error(result.message)
@@ -243,6 +278,9 @@ class AttendanceTab(ctk.CTkFrame):
             on_confirm=None,  # session already closed by session_ctrl.end_session
         )
         self._app.wait_window(dlg)
+
+        self._stop_reader_watchdog()
+        self._hide_reader_warning()
 
         if dlg.confirmed:
             self._session_id = None
@@ -279,6 +317,10 @@ class AttendanceTab(ctk.CTkFrame):
             return
 
         tap_result = attendance_ctrl.process_card_tap(card_id, self._session_id)
+
+        # Any actual tap resets the reader watchdog
+        self._reset_reader_watchdog()
+        self._hide_reader_warning()
 
         if tap_result.result_type == TapResultType.KNOWN_PRESENT:
             self._flash(_FLASH_GREEN, tap_result.message)
@@ -459,6 +501,55 @@ class AttendanceTab(ctk.CTkFrame):
         messagebox.showerror("Error", message, parent=self._app)
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Reader watchdog
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _start_reader_watchdog(self) -> None:
+        """Schedule the inactivity warning after _READER_TIMEOUT_MS."""
+        self._stop_reader_watchdog()
+        self._reader_watchdog_job = self.after(
+            _READER_TIMEOUT_MS, self._show_reader_warning
+        )
+
+    def _reset_reader_watchdog(self) -> None:
+        """A card tap occurred — restart the inactivity timer."""
+        if self._session_id is not None:
+            self._start_reader_watchdog()
+
+    def _stop_reader_watchdog(self) -> None:
+        """Cancel any pending watchdog timer (called on session end)."""
+        if self._reader_watchdog_job is not None:
+            try:
+                self.after_cancel(self._reader_watchdog_job)
+            except Exception:
+                pass
+            self._reader_watchdog_job = None
+
+    def _show_reader_warning(self) -> None:
+        """Display the RFID-not-detected banner above the feedback area."""
+        log_warning("AttendanceTab: No RFID input for 5 minutes — showing reader warning.")
+        self._reader_warning.pack(fill="x", padx=24, pady=(0, 4), before=self._banner)
+
+    def _hide_reader_warning(self) -> None:
+        """Remove the reader warning banner."""
+        self._reader_warning.pack_forget()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Manual entry fallback (used when RFID reader is unavailable)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _open_manual_entry(self) -> None:
+        """Open a dialog that lets the admin search for students and mark them present."""
+        if self._session_id is None:
+            self._show_error("Start a session first.")
+            return
+        dlg = _ManualEntryDialog(self._app, self._session_id)
+        self._app.wait_window(dlg)
+        if dlg.changed:
+            self._refresh_student_list()
+        self._rfid_entry.focus_set()
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Public hook  (called by App when this tab is selected)
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -466,3 +557,127 @@ class AttendanceTab(ctk.CTkFrame):
         """Called by App whenever the Attendance tab becomes active."""
         self._refresh_sections()
         self._rfid_entry.focus_set()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Manual entry dialog (RFID fallback)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _ManualEntryDialog(ctk.CTkToplevel):
+    """
+    Popup that allows an admin to search for a student by name and manually
+    mark them present when the RFID reader is unavailable.
+    """
+
+    def __init__(self, parent: ctk.CTk, session_id: int) -> None:
+        super().__init__(parent)
+        self.title("Manual Attendance Entry")
+        self.resizable(False, False)
+        self.grab_set()
+
+        self._session_id = session_id
+        self.changed: bool = False
+
+        self._all_students: list = []
+        self._build_ui()
+        self._load_students()
+        self._centre(parent)
+
+    def _centre(self, parent: ctk.CTk) -> None:
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        dw, dh = self.winfo_reqwidth(), self.winfo_reqheight()
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+    def _build_ui(self) -> None:
+        self.configure(fg_color="#1a1a2e")
+
+        ctk.CTkLabel(
+            self, text="Manual Attendance Entry",
+            font=ctk.CTkFont(size=18, weight="bold"), text_color="#e0e0e0",
+        ).pack(padx=28, pady=(22, 6))
+
+        ctk.CTkLabel(
+            self,
+            text="Search for a student and click Mark Present.",
+            font=ctk.CTkFont(size=12), text_color="#9ca3af",
+        ).pack(padx=28, pady=(0, 10))
+
+        self._search_var = ctk.StringVar()
+        self._search_var.trace_add("write", self._on_search)
+
+        search_frame = ctk.CTkFrame(self, fg_color="#0f0f23", corner_radius=8)
+        search_frame.pack(fill="x", padx=28, pady=(0, 8))
+
+        self._search_entry = ctk.CTkEntry(
+            search_frame, textvariable=self._search_var,
+            placeholder_text="Type a name…",
+            width=340, height=36, font=ctk.CTkFont(size=13),
+            fg_color="transparent", border_width=0,
+        )
+        self._search_entry.pack(padx=8, pady=6)
+        self._search_entry.focus_set()
+
+        self._list_frame = ctk.CTkScrollableFrame(
+            self, width=400, height=260, fg_color="#111125", corner_radius=8,
+        )
+        self._list_frame.pack(padx=28, pady=(0, 8))
+
+        self._status = ctk.CTkLabel(
+            self, text="", font=ctk.CTkFont(size=12), text_color="#4ade80",
+        )
+        self._status.pack(padx=28, pady=(0, 4))
+
+        ctk.CTkButton(
+            self, text="Close", width=120, height=38,
+            fg_color="#374151", hover_color="#4b5563",
+            command=self.destroy,
+        ).pack(pady=(0, 20))
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _load_students(self) -> None:
+        import controllers.student_controller as sc
+        self._all_students = sc.get_all_students()
+        self._render(self._all_students)
+
+    def _on_search(self, *_args: object) -> None:
+        import controllers.student_controller as sc
+        q = self._search_var.get().strip()
+        filtered = sc.search_students(q) if q else self._all_students
+        self._render(filtered)
+
+    def _render(self, students: list) -> None:
+        for w in self._list_frame.winfo_children():
+            w.destroy()
+        for s in students:
+            row = ctk.CTkFrame(self._list_frame, fg_color="#1e1e35", corner_radius=6)
+            row.pack(fill="x", pady=2, padx=4)
+            ctk.CTkLabel(
+                row,
+                text=f"{s['last_name']}, {s['first_name']}",
+                font=ctk.CTkFont(size=13), text_color="#e0e0e0",
+                width=260, anchor="w",
+            ).pack(side="left", padx=10, pady=6)
+            ctk.CTkButton(
+                row, text="Mark Present", width=120, height=30,
+                fg_color="#16a34a", hover_color="#15803d",
+                font=ctk.CTkFont(size=12),
+                command=lambda sid=s["id"], name=f"{s['first_name']} {s['last_name']}":
+                    self._mark_present(sid, name),
+            ).pack(side="right", padx=8)
+
+    def _mark_present(self, student_id: int, name: str) -> None:
+        import controllers.attendance_controller as ac
+        ok, msg = ac.mark_present_manual(self._session_id, student_id)
+        if ok:
+            self.changed = True
+            self._status.configure(
+                text=f"✓ {name} marked present (Manual).", text_color="#4ade80"
+            )
+        else:
+            self._status.configure(
+                text=msg or f"Could not mark {name} present.",
+                text_color="#ff6b6b",
+            )

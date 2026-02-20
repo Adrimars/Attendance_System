@@ -249,3 +249,145 @@ def update_student(
     except sqlite3.Error as exc:
         log_error(f"DB error updating student id={student_id}: {exc}")
         return False, f"Database error: {exc}"
+
+
+def get_all_students_with_sections() -> list[dict]:
+    """
+    Return all students enriched with their comma-separated section names.
+
+    Returns:
+        List of dicts: {id, first_name, last_name, card_id, sections}.
+        card_id is '' if not assigned.  sections is '—' if none.
+    """
+    rows = student_model.get_all_students()
+    result: list[dict] = []
+    for row in rows:
+        secs = student_model.get_sections_for_student(row["id"])
+        section_names = ", ".join(s["name"] for s in secs) if secs else "—"
+        result.append({
+            "id":         row["id"],
+            "first_name": row["first_name"],
+            "last_name":  row["last_name"],
+            "card_id":    row["card_id"] or "",
+            "sections":   section_names,
+        })
+    return result
+
+
+def create_student_manually(
+    first_name: str,
+    last_name: str,
+    section_ids: Optional[list[int]] = None,
+) -> RegistrationResult:
+    """
+    Create a new student without an RFID card (admin-initiated, not via tap).
+
+    The student's card_id remains NULL until they tap a card for the first time.
+
+    Args:
+        first_name:  Student's first name.
+        last_name:   Student's last name.
+        section_ids: Optional list of section ids to enrol the student in.
+
+    Returns:
+        RegistrationResult with success flag and new student_id.
+    """
+    first_name = first_name.strip()
+    last_name  = last_name.strip()
+
+    if not first_name or not last_name:
+        return RegistrationResult(
+            success=False,
+            message="First name and last name are required.",
+        )
+
+    try:
+        student_id = student_model.create_student(first_name, last_name, card_id=None)
+
+        if section_ids:
+            for sid in section_ids:
+                student_model.assign_section(student_id, sid)
+
+        log_info(
+            f"Manually created student id={student_id} "
+            f"name='{first_name} {last_name}' sections={section_ids}"
+        )
+        return RegistrationResult(
+            success=True,
+            student_id=student_id,
+            message=f"Student '{first_name} {last_name}' added successfully.",
+        )
+
+    except sqlite3.Error as exc:
+        log_error(f"DB error creating student manually: {exc}")
+        return RegistrationResult(
+            success=False,
+            message=f"A database error occurred: {exc}",
+        )
+
+
+def update_student_sections(
+    student_id: int,
+    section_ids: list[int],
+) -> tuple[bool, str]:
+    """
+    Replace a student's section memberships with the given list.
+
+    Removes all existing enrolments, then inserts the new ones.
+
+    Args:
+        student_id:  Target student id.
+        section_ids: New list of section ids (may be empty).
+
+    Returns:
+        (True, "") on success, (False, error_message) on failure.
+    """
+    try:
+        existing = student_model.get_sections_for_student(student_id)
+        for sec in existing:
+            student_model.remove_section(student_id, sec["id"])
+        for sid in section_ids:
+            student_model.assign_section(student_id, sid)
+        log_info(
+            f"Section memberships updated for student_id={student_id}: {section_ids}"
+        )
+        return True, ""
+    except sqlite3.Error as exc:
+        log_error(
+            f"DB error updating sections for student_id={student_id}: {exc}"
+        )
+        return False, f"Database error: {exc}"
+
+
+def get_enrolled_section_ids(student_id: int) -> set[int]:
+    """
+    Return the set of section IDs the student is currently enrolled in.
+
+    Args:
+        student_id: Target student id.
+
+    Returns:
+        Set of integer section ids (empty set on error or no enrolments).
+    """
+    try:
+        rows = student_model.get_sections_for_student(student_id)
+        return {row["id"] for row in rows}
+    except sqlite3.Error as exc:
+        log_error(f"DB error fetching enrolled sections for student_id={student_id}: {exc}")
+        return set()
+
+
+def remove_student_card(student_id: int) -> tuple[bool, str]:
+    """
+    Remove (unlink) the RFID card from a student, setting card_id to NULL.
+
+    Returns:
+        (True, "") on success, (False, error_message) on failure.
+    """
+    try:
+        student_model.remove_card(student_id)
+        log_info(f"Card removed from student_id={student_id}")
+        return True, ""
+    except sqlite3.Error as exc:
+        log_error(f"DB error removing card for student_id={student_id}: {exc}")
+        return False, f"Database error: {exc}"

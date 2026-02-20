@@ -189,7 +189,7 @@ class SectionsTab(ctk.CTkFrame):
         for s in self._sections:
             self._render_row(s)
 
-    def _render_row(self, s: object) -> None:
+    def _render_row(self, s: dict) -> None:
         row = ctk.CTkFrame(self._list_frame, fg_color="#1e1e35", corner_radius=6)
         row.pack(fill="x", pady=2, padx=4)
 

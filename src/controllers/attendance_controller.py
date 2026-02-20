@@ -145,6 +145,42 @@ def record_attendance_after_registration(
         return False
 
 
+def mark_present_manual(session_id: int, student_id: int) -> tuple[bool, str]:
+    """
+    Mark a student as Present with method='Manual' (RFID fallback path).
+
+    If the student already has a Present record, this is a no-op and returns
+    True.  If they are Absent, their record is toggled to Present.  If no
+    record exists at all, a new Present record is inserted.
+
+    Args:
+        session_id: The active session id.
+        student_id: The student to mark present.
+
+    Returns:
+        (True, "")            on success or already-present.
+        (False, error_msg)    on failure.
+    """
+    try:
+        existing = attendance_model.get_attendance_record(session_id, student_id)
+        if existing is None:
+            # No record yet — insert as Present/Manual
+            attendance_model.mark_present(session_id, student_id, method="Manual")
+            log_info(
+                f"Manual mark-present: session={session_id} student={student_id} (new record)"
+            )
+        elif existing["status"] == "Absent":
+            attendance_model.toggle_status(session_id, student_id)
+            log_info(
+                f"Manual mark-present (toggle): session={session_id} student={student_id}"
+            )
+        # else already Present — nothing to do
+        return True, ""
+    except sqlite3.Error as exc:
+        log_error(f"DB error in mark_present_manual: {exc}")
+        return False, f"Database error: {exc}"
+
+
 def toggle_attendance(session_id: int, student_id: int) -> Optional[str]:
     """
     Toggle a student's attendance status (Manual override).

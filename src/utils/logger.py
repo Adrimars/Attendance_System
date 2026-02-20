@@ -32,6 +32,8 @@ if not _logger.handlers:
     _logger.addHandler(_file_handler)
 
 
+# ── Core log functions ────────────────────────────────────────────────────────
+
 def log_info(message: str) -> None:
     """Log an informational message."""
     _logger.info(message)
@@ -50,3 +52,79 @@ def log_error(message: str) -> None:
 def log_debug(message: str) -> None:
     """Log a debug message."""
     _logger.debug(message)
+
+
+# ── Structured event helpers ──────────────────────────────────────────────────
+
+def log_startup() -> None:
+    """Log application startup."""
+    _logger.info("=" * 60)
+    _logger.info("APPLICATION STARTUP")
+    _logger.info("=" * 60)
+
+
+def log_shutdown() -> None:
+    """Log application shutdown."""
+    _logger.info("=" * 60)
+    _logger.info("APPLICATION SHUTDOWN")
+    _logger.info("=" * 60)
+
+
+def log_card_tap(card_id: str, student_name: str, result: str, session_id: int) -> None:
+    """
+    Log an RFID card tap event.
+
+    Args:
+        card_id:      The raw card identifier.
+        student_name: Full name of the matched student (or 'UNKNOWN').
+        result:       'PRESENT', 'DUPLICATE', 'UNKNOWN', or 'ERROR'.
+        session_id:   The active session id.
+    """
+    _logger.info(
+        f"CARD_TAP | card='{card_id}' student='{student_name}' "
+        f"result={result} session={session_id}"
+    )
+
+
+def log_session_start(session_id: int, section_name: str) -> None:
+    """Log a session-start event."""
+    _logger.info(
+        f"SESSION_START | id={session_id} section='{section_name}'"
+    )
+
+
+def log_session_end(
+    session_id: int,
+    section_name: str,
+    present: int,
+    absent: int,
+) -> None:
+    """Log a session-end event with summary counts."""
+    _logger.info(
+        f"SESSION_END | id={session_id} section='{section_name}' "
+        f"present={present} absent={absent}"
+    )
+
+
+def log_import_event(
+    sheet_title: str,
+    imported: int,
+    skipped: int,
+) -> None:
+    """Log a completed Google Sheets import."""
+    _logger.info(
+        f"IMPORT | sheet='{sheet_title}' imported={imported} skipped={skipped}"
+    )
+
+
+def log_export_event(destination: str, row_count: int) -> None:
+    """Log a completed data export (CSV or Google Sheets)."""
+    _logger.info(
+        f"EXPORT | destination='{destination}' rows={row_count}"
+    )
+
+
+def get_log_file_path() -> str:
+    """Return the absolute path of today's log file."""
+    return str(_log_filename)
+
