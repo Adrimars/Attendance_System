@@ -1,6 +1,6 @@
 # Project Current State — RFID Dance Class Attendance System
-**Last updated:** 2026-02-20  
-**Status:** Phase 1 + Phase 2  complete. 0 Pylance errors. All imports verified.
+**Last updated:** 2026-02-20 (Phase 4)
+**Status:** Phase 1 + Phase 2 + Phase 3 + Phase 4 complete. 0 Pylance errors. All imports verified.
 
 ---
 
@@ -22,7 +22,7 @@ A full-screen Windows kiosk app (Python 3.10 + CustomTkinter + SQLite3) for a da
 src/
   main.py                          — entry point; DB init; global error handler
   controllers/
-    attendance_controller.py       — process_rfid_passive(); old process_card_tap() kept
+    attendance_controller.py       — process_rfid_passive(); get_student_attendance_overview(); set_student_attendance(); old process_card_tap() kept
     session_controller.py          — start/end session logic (used internally)
     section_controller.py          — section CRUD orchestration
     student_controller.py          — register_student_with_sections(); CRUD helpers
@@ -37,18 +37,19 @@ src/
   utils/
     logger.py                      — file logger + structured event helpers
   views/
-    app.py                         — App(CTk): title bar + AttendanceTab + Ctrl+P handler
-    attendance_tab.py              — passive RFID listener; today's log; flash banner
-    admin_panel.py                 — AdminPanel(CTkToplevel): Sections + Students + Settings tabs
+    app.py                         — App(CTk): 1280×800 windowed; title bar + AttendanceTab + Ctrl+P handler
+    attendance_tab.py              — passive RFID listener; ● LISTENING indicator; 10-digit guard; sim panel; today's log; flash banner
+    admin_panel.py                 — AdminPanel(CTkToplevel): deferred _activate(); Sections + Students + Settings tabs
     sections_tab.py                — section list + add/edit/delete dialogs
-    students_tab.py                — student list + search + sort (no Add button here)
+    students_tab.py                — student list + search + sort + Attendance/Edit/Delete per row
     settings_tab.py                — PIN change; threshold; language; credentials; backup; import
     components/
       student_list.py
     dialogs/
-      pin_dialog.py                — PinDialog; MAX_ATTEMPTS=5 lockout; prompt_pin() helper
+      pin_dialog.py                — PinDialog; deferred _activate(); MAX_ATTEMPTS=5 lockout; prompt_pin() helper
       registration_dialog.py       — unknown-card registration; multi-section checkboxes
       student_edit_dialog.py       — edit student name/sections/RFID card
+      manual_attendance_dialog.py  — admin manual Present/Absent editor for any student+date
       import_preview_dialog.py     — Google Sheets import wizard
       session_summary_dialog.py    — end-of-session absent summary (kept for legacy use)
 specs/
@@ -113,9 +114,18 @@ RFID tap
 ## Admin Panel (Phase 3 — Current)
 
 - **Ctrl+P** on the main window → `prompt_pin(parent)` → if granted → `AdminPanel(parent)`
-- `AdminPanel` is a `CTkToplevel`, modal (`grab_set()`), 1100×720 resizable.
+- `AdminPanel` is a `CTkToplevel`, modal (`grab_set()`), 1100×720 resizable. All window-management deferred via `after(50, _activate)` to avoid blank render on Windows.
 - Contains tabs: **Sections** (`SectionsTab`), **Students** (`StudentsTab`), **Settings** (`SettingsTab`).
+- **Students tab** has an **Attendance** button per row → opens `ManualAttendanceDialog`.
 - Closing the panel calls `attendance_tab.on_tab_selected()` to refresh the attendance view.
+
+---
+
+## Simulation Panel (Phase 4)
+
+- A `💻 Sim` toggle button on the attendance screen sections bar shows/hides a development input panel.
+- Typing a 10-digit ID and pressing Enter goes through the full `_process_card()` pipeline.
+- All code is marked `#DELETABLE` for easy removal when hardware is available.
 
 ---
 
@@ -141,7 +151,7 @@ RFID tap
 
 ## What Is NOT Implemented Yet
 
-- Phase 4: Language switching (Turkish/English) — placeholder dropdown exists in Settings.
+- Phase 5: Language switching (Turkish/English) — placeholder dropdown exists in Settings.
 - Reporting / export to CSV or Google Sheets.
 - Absence alerts / notifications.
 - Multi-user concurrent access.

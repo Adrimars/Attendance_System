@@ -374,3 +374,59 @@ real-world studio usage feedback.
 - [ ] "Today's Log" list reflects all taps for the current calendar day
 - [ ] Sections info bar shows all sections scheduled for today's weekday
 
+
+---
+
+## Phase 4 — Stability, UX Polish & Manual Attendance (completed 2026-02-20)
+
+### Summary of Changes
+
+Phase 4 addresses rendering bugs on Windows, adds UX quality-of-life features (simulation, listening indicator), hardens RFID input validation, and adds a full manual attendance editor accessible from the admin panel.
+
+---
+
+### 4.1 — Window & Rendering Fixes
+
+| # | Change | Files |
+|---|--------|-------|
+| 4.1.1 | App changed from **fullscreen** to **windowed** (1280×800, resizable, min 900×600) | `views/app.py` |
+| 4.1.2 | `AdminPanel` and `PinDialog` now defer all window-management (`grab_set`, `geometry`, `lift`, `focus_force`) to `after(50, _activate)` — fixes blank/tiny render on Windows | `views/admin_panel.py`, `views/dialogs/pin_dialog.py` |
+| 4.1.3 | Removed shared `pad` dict from `PinDialog._build_ui()` — it caused `TypeError: got multiple values for keyword argument 'pady'` | `views/dialogs/pin_dialog.py` |
+
+---
+
+### 4.2 — Attendance Tab UX
+
+| # | Change | Files |
+|---|--------|-------|
+| 4.2.1 | `● LISTENING` / `◌ IDLE` indicator added to sections bar — shows RFID entry focus state in real time | `views/attendance_tab.py` |
+| 4.2.2 | 10-digit numeric guard added to `_on_rfid_enter()` — rejects anything that is not exactly 10 decimal digits | `views/attendance_tab.py` |
+| 4.2.3 | **Simulation panel** (marked `#DELETABLE`) added — amber toggle button shows a dev input row where a card ID can be typed and submitted through the real processing pipeline | `views/attendance_tab.py` |
+| 4.2.4 | Card processing logic extracted to `_process_card(card_id)` — called by both `_on_rfid_enter` and `_sim_submit` to avoid duplication and focus conflicts | `views/attendance_tab.py` |
+| 4.2.5 | `<FocusOut>` refactored: `_on_rfid_focus_out()` skips refocus when sim panel is visible; `_try_refocus()` backs off when a modal `grab` is active — eliminates LISTENING↔IDLE loop and admin-panel freeze | `views/attendance_tab.py` |
+
+---
+
+### 4.3 — Manual Attendance Editor
+
+| # | Change | Files |
+|---|--------|-------|
+| 4.3.1 | `get_student_attendance_overview(student_id, date_str)` — returns per-section attendance status for any date | `controllers/attendance_controller.py` |
+| 4.3.2 | `set_student_attendance(student_id, section_id, date_str, target_status)` — sets Present/Absent directly, auto-creating session if needed | `controllers/attendance_controller.py` |
+| 4.3.3 | New `ManualAttendanceDialog` — date picker + per-section Present/Absent buttons; changes saved immediately | `views/dialogs/manual_attendance_dialog.py` *(new)* |
+| 4.3.4 | **Attendance** button added to each student row in `StudentsTab` (admin panel) — opens `ManualAttendanceDialog` | `views/students_tab.py` |
+
+---
+
+### 4.4 — Phase 4 Exit Criteria
+
+- [x] App opens in a normal window (not fullscreen)
+- [x] Admin panel and PIN dialog render fully and come to front on Windows
+- [x] `● LISTENING` indicator accurately reflects RFID entry focus
+- [x] Card IDs that are not exactly 10 digits are rejected with a red flash
+- [x] Sim panel allows typing a card ID to simulate a hardware tap
+- [x] No focus loop between RFID entry and sim panel
+- [x] Admin panel opens/closes without event-loop thrashing
+- [x] Clicking **Attendance** on a student row opens the manual editor
+- [x] Manual editor shows per-section status for any date
+- [x] Clicking Present/Absent saves immediately to the DB

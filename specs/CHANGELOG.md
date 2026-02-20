@@ -137,3 +137,97 @@ All tab `__init__` signatures changed from `parent: ctk.CTkFrame, root: ctk.CTk`
 - `student_edit_dialog.py` uses `student_ctrl.get_enrolled_section_ids()` — NOT `models.student_model.get_sections_for_student()` directly.
 - Log files go to `logs/attendance_YYYY-MM-DD.log` — path determined by `utils/logger.py`.
 - Backups go to `backups/attendance_YYYY-MM-DD_HHMMSS.db`.
+
+---
+
+## Phase 4 — Stability, UX Polish & Manual Attendance (completed 2026-02-20)
+
+---
+
+### 4-A: Windowed mode
+
+**Before:** App launched fullscreen (`self.attributes("-fullscreen", True)`).
+**After:** App opens as a normal resizable window at `1280×800` (minimum `900×600`).
+**Files changed:** `views/app.py` — removed `-fullscreen` attribute and the `_exit_fullscreen` method (Escape handler removed too).
+**Do NOT re-add fullscreen as the default.** If the operator wants fullscreen they can maximise the OS window.
+
+---
+
+### 4-B: CTkToplevel deferred activation
+
+**Problem:** On Windows, `CTkToplevel` widgets opened from a fullscreen parent (or any parent) render blank/tiny when `grab_set()`, `geometry()`, and `lift()` are called synchronously in `__init__`. The OS maps the window shell before child widgets are drawn.
+**Fix:** Both `PinDialog` and `AdminPanel` now defer all window-management calls to `self.after(50, self._activate)`. The `_activate()` method runs after the first render tick and calls `_centre()`, `grab_set()`, `lift()`, `focus_force()`, and a brief `-topmost True` flash.
+**Files changed:** `views/dialogs/pin_dialog.py`, `views/admin_panel.py`.
+**Do NOT move window sizing/grab calls back into `__init__` synchronously.**
+
+---
+
+### 4-C: PinDialog `pady` duplicate keyword crash fix
+
+**Problem:** `_build_ui()` defined `pad = {"padx": 30, "pady": 10}` and then called `.pack(**pad, pady=(24,4))` — passing `pady` twice → `TypeError`.
+**Fix:** Removed the shared `pad` dict; each `.pack()` call now specifies `padx` and `pady` independently.
+**Files changed:** `views/dialogs/pin_dialog.py`.
+
+---
+
+### 4-D: LISTENING/IDLE indicator
+
+**Added:** A `● LISTENING` / `◌ IDLE` label in the right side of the sections info bar in the attendance tab.
+- Shows green `● LISTENING` when the hidden RFID entry has keyboard focus (ready to receive hardware input).
+- Shows grey `◌ IDLE` when focus is elsewhere (e.g. admin panel open).
+**Files changed:** `views/attendance_tab.py`.
+
+---
+
+### 4-E: 10-digit RFID guard
+
+**Added:** Before any DB lookup, `_on_rfid_enter()` validates `card_id.isdigit() and len(card_id) == 10`. Anything else triggers a red flash showing the rejected value and returns without processing.
+**Files changed:** `views/attendance_tab.py`.
+**Do NOT remove or relax this guard.** RFID readers used in this project produce exactly 10 decimal digits.
+
+---
+
+### 4-F: RFID simulation panel
+
+**Added:** A `💻 Sim` toggle button in the sections bar. Clicking it shows/hides a clearly-marked amber simulation panel where any 10-digit ID can be typed and submitted, going through the exact same `_process_card()` pipeline as a real hardware tap.
+**Purpose:** Hardware RFID reader not always available during development.
+**All simulation code is marked `#DELETABLE`.** To remove: delete `_build_sim_panel()` call in `_build_ui()`, the `_sim_toggle_btn` lines, and the three methods `_build_sim_panel`, `_toggle_sim_panel`, `_sim_submit`.
+**Files changed:** `views/attendance_tab.py`.
+
+---
+
+### 4-G: Focus management refactor (loop & freeze fixes)
+
+**Problems fixed:**
+1. Clicking the Sim button caused an infinite LISTENING↔IDLE loop — the `FocusOut` handler unconditionally rescheduled `_rfid_entry.focus_set()` every 100 ms, fighting the sim entry.
+2. Second and subsequent sim taps misbehaved — `_sim_submit` injected text into `_rfid_entry` and called `_on_rfid_enter`, which ended with `_rfid_entry.focus_set()`, stealing focus from `_sim_entry`.
+3. Opening/closing the admin panel caused event-loop thrashing — the refocus timer fought `grab_set()` repeatedly.
+
+**Fixes:**
+- `<FocusOut>` now calls `_on_rfid_focus_out()` which only schedules `_try_refocus()` when `_sim_visible is False`.
+- `_try_refocus()` checks `grab_current()` — backs off with a 500 ms retry if a modal is open.
+- Card logic extracted to `_process_card(card_id)` — called by both `_on_rfid_enter` and `_sim_submit` directly, with no focus side-effects.
+- `_open_registration()` returns focus to `_sim_entry` if sim panel is visible, otherwise to `_rfid_entry`.
+**Files changed:** `views/attendance_tab.py`.
+
+---
+
+### 4-H: Manual attendance editor
+
+**Added:** Admin can manually set any student's attendance for any date from the Students tab in the admin panel.
+
+**New controller functions** (`controllers/attendance_controller.py`):
+- `get_student_attendance_overview(student_id, date_str)` — returns per-section status for a student on any date.
+- `set_student_attendance(student_id, section_id, date_str, target_status)` — explicitly sets Present/Absent, auto-creating a session if needed.
+
+**New dialog** (`views/dialogs/manual_attendance_dialog.py`):
+- Date picker (default today); any `YYYY-MM-DD` accepted.
+- One row per enrolled section showing: section name, schedule (day+time), coloured status badge, **✓ Present** and **✗ Absent** buttons.
+- Currently-active status button is highlighted. Changes save immediately on click.
+
+**Students tab change** (`views/students_tab.py`):
+- Each student row now has a green **Attendance** button alongside Edit and Delete.
+- Button opens `ManualAttendanceDialog` for that student.
+- Action column width widened from 196 to 296 px to accommodate the third button.
+
+**Do NOT route manual attendance changes through `process_rfid_passive()`.** Use `set_student_attendance()` directly.
