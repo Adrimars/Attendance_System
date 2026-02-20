@@ -232,54 +232,43 @@ Acceptance Criteria:
 - **Description:** [Detailed description of the risk]
 - **Mitigation Strategy:** [How will we prevent or handle this risk?]
 
----
 
-## 12. Timeline & Milestones
+## 12. Resources & Team
 
-| Milestone | Target Date | Description |
-|-----------|-------------|-------------|
-| [milestone] | [MM/DD/YYYY] | [Brief description] |
-| [milestone] | [MM/DD/YYYY] | [Brief description] |
-| [milestone] | [MM/DD/YYYY] | [Brief description] |
-
----
-
-## 13. Resources & Team
-
-### 13.1 Team Structure
+### 12.1 Team Structure
 - **Product Manager:** [Name]
 - **Engineering Lead:** [Name]
 - **Designer:** [Name]
 - **QA Lead:** [Name]
 - **[Other Roles]:** [Names]
 
-### 13.2 Required Resources
+### 12.2 Required Resources
 - [Resource requirement]
 - [Tool/Software requirement]
 - [Infrastructure requirement]
 
 ---
 
-## 14. Marketing & Go-to-Market
+## 13. Marketing & Go-to-Market
 
-### 14.1 Target Market
+### 13.1 Target Market
 [Describe the primary target market and customer segment]
 
-### 14.2 Competitive Advantage
+### 13.2 Competitive Advantage
 [How do we differentiate from competitors?]
 
-### 14.3 Launch Strategy
+### 13.3 Launch Strategy
 [Describe the go-to-market launch approach]
 
 ---
 
-## 15. Appendices & References
+## 14. Appendices & References
 
-### 15.1 Glossary
+### 14.1 Glossary
 - **[Term]:** [Definition]
 - **[Term]:** [Definition]
 
-### 15.2 Supporting Documents
+### 14.2 Supporting Documents
 - [Link to design mockups/wireframes]
 - [Link to technical specifications]
 - [Link to market research]
