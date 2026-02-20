@@ -58,61 +58,90 @@ This order minimizes rework: models are stable before controllers consume them, 
 
 | # | Task | Layer | PRD Ref | Done |
 |---|------|-------|---------|------|
-| 1.1 | Create project skeleton: folder structure, `main.py` entry point, `requirements.txt`, `.gitignore` | Infra | §9.2, §9.3 | [ ] |
-| 1.2 | Implement `database.py` — connection manager with WAL mode, schema initialization (all 6 tables from agents.md §3), migration support | Model | FR-1.4 | [ ] |
-| 1.3 | Implement `student_model.py` — CRUD operations: create, get_by_id, get_by_card_id, get_all, update, delete, assign/remove section, reassign card | Model | FR-1.3, FR-1.6, FR-1.7, FR-1.12 | [ ] |
-| 1.4 | Implement `section_model.py` — CRUD operations: create, get_by_id, get_all, update, delete, get_enrolled_students | Model | FR-1.5 | [ ] |
-| 1.5 | Implement `session_model.py` — create session, get active session, close session, check for existing session (same section + date) | Model | FR-1.10, FR-1.11 | [ ] |
-| 1.6 | Implement `attendance_model.py` — mark present (RFID/Manual), mark absent, toggle status, get attendance by session, check duplicate tap | Model | FR-1.2, FR-1.9 | [ ] |
-| 1.7 | Implement `settings_model.py` — get/set key-value pairs (admin PIN, absence threshold, language, credentials path) | Model | §5.2 | [ ] |
-| 1.8 | Implement `attendance_controller.py` — process card tap (lookup → known/unknown/duplicate), return result type + student info for UI feedback | Controller | FR-1.1, FR-1.2, FR-1.3, FR-1.13 | [ ] |
-| 1.9 | Implement `session_controller.py` — start session (validate section, check existing, create), end session (generate absent summary, close), get live attendance state | Controller | FR-1.10, FR-1.11, FR-1.14 | [ ] |
-| 1.10 | Implement `student_controller.py` — register new student from unknown card, reassign RFID card (validate uniqueness, unlink old), search/sort students | Controller | FR-1.3, FR-1.12, FR-1.15 | [ ] |
-| 1.11 | Implement `section_controller.py` — section CRUD orchestration with validation | Controller | FR-1.5 | [ ] |
-| 1.12 | Set up `app.py` — main CustomTkinter window, full-screen launch, force-focus, tab-based navigation skeleton (Attendance, Students, Sections, Settings tabs) | View | §5.4 | [ ] |
-| 1.13 | Implement Attendance tab — section selector dropdown, Start/End Session buttons, hidden RFID input entry widget (focused, captures keyboard stream, fires on Enter), live student list (name + status), color-flash background (Green/Red/Yellow for 2–3s) | View | FR-1.8, FR-1.10, FR-1.11, FR-1.13, FR-1.14 | [ ] |
-| 1.14 | Implement registration dialog — popup triggered by unknown card tap, fields: first name, last name, confirm/cancel buttons, optional section assignment | View | FR-1.3 | [ ] |
-| 1.15 | Implement manual attendance toggle — clickable Present/Absent status in the live student list, sets `method = 'Manual'` | View | FR-1.9 | [ ] |
-| 1.16 | Implement End Session popup — summary showing total enrolled, present count, absent count, named absent list, last-minute manual toggle, Confirm & Close button | View | FR-1.11 | [ ] |
+| 1.1 | Create project skeleton: folder structure, `main.py` entry point, `requirements.txt`, `.gitignore` | Infra | §9.2, §9.3 | [x] |
+| 1.2 | Implement `database.py` — connection manager with WAL mode, schema initialization (all 6 tables from agents.md §3), migration support | Model | FR-1.4 | [x] |
+| 1.3 | Implement `student_model.py` — CRUD operations: create, get_by_id, get_by_card_id, get_all, update, delete, assign/remove section, reassign card | Model | FR-1.3, FR-1.6, FR-1.7, FR-1.12 | [x] |
+| 1.4 | Implement `section_model.py` — CRUD operations: create, get_by_id, get_all, update, delete, get_enrolled_students | Model | FR-1.5 | [x] |
+| 1.5 | Implement `session_model.py` — create session, get active session, close session, check for existing session (same section + date) | Model | FR-1.10, FR-1.11 | [x] |
+| 1.6 | Implement `attendance_model.py` — mark present (RFID/Manual), mark absent, toggle status, get attendance by session, check duplicate tap | Model | FR-1.2, FR-1.9 | [x] |
+| 1.7 | Implement `settings_model.py` — get/set key-value pairs (admin PIN, absence threshold, language, credentials path) | Model | §5.2 | [x] |
+| 1.8 | Implement `attendance_controller.py` — process card tap (lookup → known/unknown/duplicate), return result type + student info for UI feedback | Controller | FR-1.1, FR-1.2, FR-1.3, FR-1.13 | [x] |
+| 1.9 | Implement `session_controller.py` — start session (validate section, check existing, create), end session (generate absent summary, close), get live attendance state | Controller | FR-1.10, FR-1.11, FR-1.14 | [x] |
+| 1.10 | Implement `student_controller.py` — register new student from unknown card, reassign RFID card (validate uniqueness, unlink old), search/sort students | Controller | FR-1.3, FR-1.12, FR-1.15 | [x] |
+| 1.11 | Implement `section_controller.py` — section CRUD orchestration with validation | Controller | FR-1.5 | [x] |
+| 1.12 | Set up `app.py` — main CustomTkinter window, full-screen launch, force-focus, tab-based navigation skeleton (Attendance, Students, Sections, Settings tabs) | View | §5.4 | [x] |
+| 1.13 | Implement Attendance tab — section selector dropdown, Start/End Session buttons, hidden RFID input entry widget (focused, captures keyboard stream, fires on Enter), live student list (name + status), color-flash background (Green/Red/Yellow for 2–3s) | View | FR-1.8, FR-1.10, FR-1.11, FR-1.13, FR-1.14 | [x] |
+| 1.14 | Implement registration dialog — popup triggered by unknown card tap, fields: first name, last name, confirm/cancel buttons, optional section assignment | View | FR-1.3 | [x] |
+| 1.15 | Implement manual attendance toggle — clickable Present/Absent status in the live student list, sets `method = 'Manual'` | View | FR-1.9 | [x] |
+| 1.16 | Implement End Session popup — summary showing total enrolled, present count, absent count, named absent list, last-minute manual toggle, Confirm & Close button | View | FR-1.11 | [x] |
 
 #### Phase 1 (Day 1) Exit Criteria
-- [ ] App launches full-screen on Windows with tab navigation
-- [ ] Can create a section, start a session for it, tap an RFID card, and see the student marked present with a green flash
-- [ ] Unknown card tap opens registration dialog; completing it creates the student and records attendance
-- [ ] Duplicate tap shows yellow flash and "Already marked" message
-- [ ] Can manually toggle a student's attendance (flagged as Manual in DB)
-- [ ] End Session shows absent summary popup with correct counts
-- [ ] All data persists in `attendance.db` with WAL mode
+- [x] App launches full-screen on Windows with tab navigation
+- [x] Can create a section, start a session for it, tap an RFID card, and see the student marked present with a green flash
+- [x] Unknown card tap opens registration dialog; completing it creates the student and records attendance
+- [x] Duplicate tap shows yellow flash and "Already marked" message
+- [x] Can manually toggle a student's attendance (flagged as Manual in DB)
+- [x] End Session shows absent summary popup with correct counts
+- [x] All data persists in `attendance.db` with WAL mode
 
 ---
 
 ### Phase 2 — MVP Completion (Day 2)
-**Goal:** Student/section management screens, RFID card reassignment, legacy import, admin PIN protection, and polish. MVP is fully usable.
+**Goal:** Student/section management screens, RFID card reassignment, legacy import, admin panel, and polish. MVP is fully usable.
 
 #### Tasks
+
+##### 2A — Student & Section Management
 
 | # | Task | Layer | PRD Ref | Done |
 |---|------|-------|---------|------|
 | 2.1 | Implement Students tab — full student list view with columns (Name, RFID, Sections), sort by name/RFID/section, real-time search box, add/edit/delete buttons | View | FR-1.6, FR-1.15 | [ ] |
 | 2.2 | Implement student edit dialog — edit first name, last name, section assignments, "Change RFID Card" button (tap new card or type manually), RFID uniqueness validation | View | FR-1.6, FR-1.12 | [ ] |
 | 2.3 | Implement Sections tab — section list with columns (Name, Type, Level, Day, Time), add/edit/delete section dialogs | View | FR-1.5 | [ ] |
-| 2.4 | Implement Settings tab — admin PIN change, absence threshold config, language selector placeholder, Google credentials path, Backup Database button | View | §5.2, §5.3 | [ ] |
-| 2.5 | Implement admin PIN protection — PIN entry dialog on app launch, PIN stored hashed in settings table, lockout after 5 failed attempts | Controller/View | §5.2 | [ ] |
-| 2.6 | Implement `import_controller.py` — legacy Google Sheets import: read sheet with `name`, `rfid`, `D_YYYY_MM_DD` columns, apply minimum attendance threshold, exclude below-threshold students without RFID, preview before commit | Controller | FR-2.7, FR-2.8 | [ ] |
-| 2.7 | Implement legacy import UI — import button in Settings or admin panel, Google Sheet URL input, preview table (total students, with/without RFID, attendance counts), threshold input, confirm/cancel | View | FR-2.7, FR-2.8 | [ ] |
-| 2.8 | Implement database backup — copy `attendance.db` to timestamped backup file on button click | Controller | §5.3 | [ ] |
-| 2.9 | Implement `logger.py` — local file logging with timestamps for: app startup/shutdown, card taps, session start/end, errors, imports, exports | Infra | §5.5 | [ ] |
-| 2.10 | Implement error handling pass — wrap all DB writes in transactions, add try/catch in every controller method, show user-friendly error dialogs for all failure modes (reader disconnected, DB error, etc.) | Controller/View | §5.3 | [ ] |
-| 2.11 | Reader disconnection detection — show error banner "RFID reader not detected" when no input received, allow manual name entry as fallback | View | UC-1 alt | [ ] |
+| 2.4 | Reader disconnection detection — show error banner "RFID reader not detected" when no input received, allow manual name entry as fallback | View | UC-1 alt | [ ] |
+
+##### 2B — Admin Panel
+
+> The Admin Panel is implemented as the **Settings tab** in the main window. It is the single place for all privileged/configuration actions. It is protected by the admin PIN — the PIN dialog appears on app launch before the main window is accessible.
+
+**Admin Panel screens and features:**
+
+| Screen / Feature | Description | PRD Ref |
+|-----------------|-------------|---------|
+| PIN Entry Dialog | Shown on app launch; hashed PIN compared against settings table; lockout after 5 failed attempts | §5.2 |
+| PIN Change | Field to enter current PIN + new PIN + confirm; updates hashed value in settings table | §5.2 |
+| Absence Threshold | Numeric input to set the global absence alert threshold (default: 3); stored in settings table | FR-2.4 |
+| Language Selector | Dropdown placeholder for Turkish / English (active in Phase 3); stored in settings table | FR-3.1 |
+| Google Credentials Path | File picker to set path to service account JSON key; path stored in settings table (never the file itself) | §5.2 |
+| Backup Database | Button that copies `attendance.db` to `backups/attendance_YYYY-MM-DD_HHMMSS.db` | §5.3 |
+| Legacy Import | Google Sheet URL input + minimum attendance threshold input → preview table (total students, with/without RFID, attendance counts) → confirm/cancel | FR-2.7, FR-2.8 |
+
+**Admin Panel tasks:**
+
+| # | Task | Layer | PRD Ref | Done |
+|---|------|-------|---------|------|
+| 2.5 | Implement `pin_dialog.py` — PIN entry on app launch, hash comparison against settings table, lockout counter (block UI after 5 failed attempts) | Controller/View | §5.2 | [ ] |
+| 2.6 | Implement `settings_tab.py` — PIN change form, absence threshold input, language dropdown (placeholder), Google credentials file picker, Backup Database button; all changes persist to settings table | View | §5.2, §5.3 | [ ] |
+| 2.7 | Implement `import_controller.py` — read legacy Google Sheet (`name`, `rfid`, `D_YYYY_MM_DD` columns), apply minimum attendance threshold, exclude below-threshold students without RFID, return preview data and commit on confirm | Controller | FR-2.7, FR-2.8 | [ ] |
+| 2.8 | Implement `import_preview_dialog.py` — Google Sheet URL input, threshold spinner, preview table (total/with RFID/without RFID/session counts), confirm/cancel buttons wired to import controller | View | FR-2.7, FR-2.8 | [ ] |
+| 2.9 | Implement database backup — on "Backup Now" click, copy `attendance.db` to `backups/attendance_YYYY-MM-DD_HHMMSS.db`; show success/failure dialog | Controller | §5.3 | [ ] |
+
+##### 2C — Infrastructure & Polish
+
+| # | Task | Layer | PRD Ref | Done |
+|---|------|-------|---------|------|
+| 2.10 | Implement `logger.py` — local file logging with timestamps for: app startup/shutdown, card taps, session start/end, errors, imports, exports | Infra | §5.5 | [ ] |
+| 2.11 | Implement error handling pass — wrap all DB writes in transactions, add try/except in every controller method, show user-friendly error dialogs for all failure modes (reader disconnected, DB error, import failure, etc.) | Controller/View | §5.3 | [ ] |
 
 #### Phase 2 (Day 2) Exit Criteria
 - [ ] Can CRUD students with RFID assignment, search, and sort
 - [ ] Can reassign an RFID card to a different student (old card unlinked, new card validated for uniqueness)
 - [ ] Can CRUD sections with type, level, and schedule
-- [ ] Admin PIN is required on app launch; incorrect PIN shows error
-- [ ] Legacy Google Sheets import works with attendance threshold filtering and preview
-- [ ] Database backup creates a timestamped copy on button click
-- [ ] All events are logged to a local log file
+- [ ] Admin PIN dialog appears on app launch; wrong PIN rejected; 5 failures locks the UI
+- [ ] Settings tab shows: PIN change, absence threshold, language dropdown, credentials path, Backup button, Legacy Import button
+- [ ] Legacy Google Sheets import works with attendance threshold filtering and preview before commit
+- [ ] Database backup creates a timestamped copy in `backups/` on button click
+- [ ] All events are logged to a local log file with timestamps
 - [ ] All errors show user-friendly dialogs — no raw tracebacks anywhere
 - [ ] **MVP is fully usable end-to-end for the studio**
 
