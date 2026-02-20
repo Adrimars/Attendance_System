@@ -78,7 +78,7 @@ def _section(parent: Any, title: str) -> ctk.CTkFrame:
 class SettingsTab(ctk.CTkFrame):
     """Settings / Admin Panel tab."""
 
-    def __init__(self, parent: ctk.CTkFrame, root: ctk.CTk) -> None:
+    def __init__(self, parent: Any, root: Any) -> None:
         super().__init__(parent, fg_color="#1a1a2e", corner_radius=0)
         self._app = root
         self._build_ui()

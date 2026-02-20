@@ -1,8 +1,10 @@
 """
-registration_dialog.py — Popup for registering a new student after an unknown card tap.
+registration_dialog.py — Register a new student after an unknown RFID card tap.
 
-Triggered by AttendanceTab when process_card_tap() returns UNKNOWN_CARD.
-On confirmation, returns the new student_id (or None if cancelled).
+Triggered by AttendanceTab when process_rfid_passive() returns UNKNOWN_CARD.
+The card_id is pre-filled; the user enters first name, last name, and selects
+one or more sections.  On confirmation calls
+student_controller.register_student_with_sections() and exposes student_id.
 """
 
 from __future__ import annotations
@@ -20,8 +22,12 @@ class RegistrationDialog(ctk.CTkToplevel):
     """
     Modal dialog to register a new student for an unknown RFID card.
 
-    After construction call .wait_window() and check .student_id to know if
-    registration succeeded.
+    Usage::
+
+        dlg = RegistrationDialog(parent, card_id)
+        parent.wait_window(dlg)
+        if dlg.student_id is not None:
+            # registration succeeded; student_id is the new row id
     """
 
     def __init__(self, parent: ctk.CTk, card_id: str) -> None:
@@ -31,147 +37,152 @@ class RegistrationDialog(ctk.CTkToplevel):
         self.grab_set()
 
         self.card_id: str = card_id
-        self.student_id: Optional[int] = None   # Set on successful registration
+        self.student_id: Optional[int] = None   # set on successful save
 
         self._sections = section_controller.get_all_sections()
+        self._section_vars: dict[int, ctk.BooleanVar] = {}
 
         self._build_ui()
         self._centre(parent)
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Layout
+    # ──────────────────────────────────────────────────────────────────────────
+
     def _centre(self, parent: ctk.CTk) -> None:
         self.update_idletasks()
-        pw = parent.winfo_width()
-        ph = parent.winfo_height()
-        px = parent.winfo_x()
-        py = parent.winfo_y()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
         dw = self.winfo_reqwidth()
         dh = self.winfo_reqheight()
-        x = px + (pw - dw) // 2
-        y = py + (ph - dh) // 2
-        self.geometry(f"+{x}+{y}")
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
 
     def _build_ui(self) -> None:
         self.configure(fg_color="#1a1a2e")
-        pad = {"padx": 32, "pady": 8}
+        pad = {"padx": 32, "pady": 6}
 
         ctk.CTkLabel(
             self,
             text="Register New Student",
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color="#e0e0e0",
-        ).pack(padx=32, pady=(24, 4))
+        ).pack(padx=32, pady=(24, 2))
 
+        # Card ID badge (read-only)
         ctk.CTkLabel(
             self,
-            text=f"Card ID: {self.card_id}",
-            font=ctk.CTkFont(size=12),
+            text=f"Card ID:  {self.card_id}",
+            font=ctk.CTkFont(size=13),
             text_color="#a0a0b0",
-        ).pack(padx=32, pady=(0, 12))
+        ).pack(padx=32, pady=(0, 14))
 
-        # First name
+        # ── First name ────────────────────────────────────────────────────────
         ctk.CTkLabel(
             self, text="First Name *", font=ctk.CTkFont(size=13),
             text_color="#c0c0d0", anchor="w",
         ).pack(fill="x", **pad)
-        self._first_name_entry = ctk.CTkEntry(
+        self._first_entry = ctk.CTkEntry(
             self, placeholder_text="First name",
-            width=300, height=44, font=ctk.CTkFont(size=15),
+            width=340, height=44, font=ctk.CTkFont(size=15),
         )
-        self._first_name_entry.pack(**pad)
-        self._first_name_entry.focus_set()
+        self._first_entry.pack(**pad)
+        self._first_entry.focus_set()
 
-        # Last name
+        # ── Last name ─────────────────────────────────────────────────────────
         ctk.CTkLabel(
             self, text="Last Name *", font=ctk.CTkFont(size=13),
             text_color="#c0c0d0", anchor="w",
         ).pack(fill="x", **pad)
-        self._last_name_entry = ctk.CTkEntry(
+        self._last_entry = ctk.CTkEntry(
             self, placeholder_text="Last name",
-            width=300, height=44, font=ctk.CTkFont(size=15),
+            width=340, height=44, font=ctk.CTkFont(size=15),
         )
-        self._last_name_entry.pack(**pad)
+        self._last_entry.pack(**pad)
 
-        # Optional section
+        # ── Section assignment (checkboxes) ───────────────────────────────────
         ctk.CTkLabel(
-            self, text="Section (optional)", font=ctk.CTkFont(size=13),
+            self, text="Sections", font=ctk.CTkFont(size=13),
             text_color="#c0c0d0", anchor="w",
-        ).pack(fill="x", **pad)
+        ).pack(fill="x", padx=32, pady=(10, 4))
 
-        section_names = ["(none)"] + [s["name"] for s in self._sections]
-        self._section_var = ctk.StringVar(value="(none)")
-        self._section_menu = ctk.CTkOptionMenu(
-            self,
-            values=section_names,
-            variable=self._section_var,
-            width=300,
-            height=40,
-            font=ctk.CTkFont(size=14),
+        sec_scroll = ctk.CTkScrollableFrame(
+            self, fg_color="#0f0f23", corner_radius=8,
+            height=min(180, max(60, len(self._sections) * 36)),
+            width=340,
         )
-        self._section_menu.pack(**pad)
+        sec_scroll.pack(padx=32, pady=(0, 6))
 
-        # Status label
-        self._status_label = ctk.CTkLabel(
+        if self._sections:
+            for sec in self._sections:
+                var = ctk.BooleanVar(value=False)
+                self._section_vars[sec["id"]] = var
+                ctk.CTkCheckBox(
+                    sec_scroll,
+                    text=f"{sec['name']}  ({sec['day']} {sec['time']})",
+                    variable=var,
+                    font=ctk.CTkFont(size=13),
+                    text_color="#d0d0e0",
+                    checkbox_width=20, checkbox_height=20,
+                ).pack(anchor="w", padx=8, pady=4)
+        else:
+            ctk.CTkLabel(
+                sec_scroll,
+                text="No sections available — add sections via admin panel.",
+                font=ctk.CTkFont(size=12),
+                text_color="#6b7280",
+            ).pack(padx=8, pady=8)
+
+        # ── Status label ──────────────────────────────────────────────────────
+        self._status_lbl = ctk.CTkLabel(
             self, text="", font=ctk.CTkFont(size=12), text_color="#ff6b6b",
         )
-        self._status_label.pack(padx=32, pady=(4, 8))
+        self._status_lbl.pack(padx=32, pady=(4, 6))
 
-        # Buttons
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(padx=32, pady=(0, 24))
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(padx=32, pady=(0, 24))
 
         ctk.CTkButton(
-            btn_frame,
-            text="Cancel",
-            width=140,
-            height=44,
-            fg_color="#374151",
-            hover_color="#4b5563",
-            command=self._cancel,
+            btn_row, text="Cancel", width=140, height=44,
+            fg_color="#374151", hover_color="#4b5563",
             font=ctk.CTkFont(size=14),
+            command=self._cancel,
         ).pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
-            btn_frame,
-            text="Register & Mark Present",
-            width=200,
-            height=44,
-            fg_color="#16a34a",
-            hover_color="#15803d",
-            command=self._confirm,
+            btn_row, text="Register & Mark Present", width=220, height=44,
+            fg_color="#16a34a", hover_color="#15803d",
             font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._confirm,
         ).pack(side="left")
 
-        # Keyboard shortcuts
-        self._last_name_entry.bind("<Return>", lambda _e: self._confirm())
+        self._last_entry.bind("<Return>", lambda _e: self._confirm())
         self.protocol("WM_DELETE_WINDOW", self._cancel)
 
-    def _get_selected_section_id(self) -> Optional[int]:
-        """Return the selected section id, or None if '(none)' is selected."""
-        selected_name = self._section_var.get()
-        if selected_name == "(none)":
-            return None
-        for s in self._sections:
-            if s["name"] == selected_name:
-                return s["id"]
-        return None
+    # ──────────────────────────────────────────────────────────────────────────
+    # Actions
+    # ──────────────────────────────────────────────────────────────────────────
 
     def _confirm(self) -> None:
-        first_name = self._first_name_entry.get().strip()
-        last_name  = self._last_name_entry.get().strip()
-        section_id = self._get_selected_section_id()
+        first = self._first_entry.get().strip()
+        last  = self._last_entry.get().strip()
+        selected_ids = [
+            sec_id for sec_id, var in self._section_vars.items() if var.get()
+        ]
 
-        result = student_controller.register_new_student(
-            first_name, last_name, self.card_id, section_id
+        result = student_controller.register_student_with_sections(
+            first, last, self.card_id, selected_ids
         )
 
         if result.success:
             self.student_id = result.student_id
             log_info(
-                f"Registration dialog: registered student_id={self.student_id}"
+                f"RegistrationDialog: registered student_id={self.student_id} "
+                f"sections={selected_ids}"
             )
             self.destroy()
         else:
-            self._status_label.configure(text=result.message)
+            self._status_lbl.configure(text=result.message)
 
     def _cancel(self) -> None:
         self.student_id = None

@@ -303,3 +303,74 @@ A feature is **done** when:
 
 *Primary specification: `specs/prd/PRD-rfid-attendance-system.md`*  
 *Agent guidelines: `specs/agents.md`*
+
+---
+
+## 9. Phase 3 — UX & Security Redesign (2026-02-20)
+
+### Summary of Changes
+
+Phase 3 reworks the main window, attendance flow, and access-control model based on
+real-world studio usage feedback.
+
+---
+
+### 3.1 — Admin Panel (Ctrl+P)
+
+| # | Change | Files |
+|---|--------|-------|
+| 3.1.1 | New `AdminPanel` CTkToplevel window opened by **Ctrl+P** | `views/admin_panel.py` *(new)* |
+| 3.1.2 | PIN prompt (existing PinDialog) gates every admin panel open | `views/app.py`, `views/dialogs/pin_dialog.py` |
+| 3.1.3 | Admin panel contains **Sections**, **Students**, **Settings** tabs | `views/admin_panel.py` |
+| 3.1.4 | Main window **no longer shows Sections / Students / Settings tabs** — only the attendance view | `views/app.py` |
+| 3.1.5 | **No PIN on app startup** — the app opens directly to the attendance screen | `views/app.py` (removed `_check_pin`) |
+
+---
+
+### 3.2 — Passive Attendance (Always-On RFID)
+
+| # | Change | Files |
+|---|--------|-------|
+| 3.2.1 | Remove **Start Session / End Session** buttons and section selector dropdown from the attendance screen | `views/attendance_tab.py` |
+| 3.2.2 | RFID entry widget is always active — no session state required to record a tap | `views/attendance_tab.py` |
+| 3.2.3 | On tap → look up card → mark student **Present in every section scheduled for today** (section.day == today's weekday) | `controllers/attendance_controller.py` → `process_rfid_passive()` |
+| 3.2.4 | Sessions are **auto-created** per section per day on first tap; subsequent taps reuse the same session | `models/session_model.py` → `get_or_create_session()` |
+| 3.2.5 | Duplicate tap (student already fully marked today) → yellow flash with names of already-marked sections | `controllers/attendance_controller.py` |
+| 3.2.6 | Attendance screen shows **"Today's Log"**: all taps for the current calendar day, newest first, with student name, section, status, method, timestamp | `views/attendance_tab.py`, `models/attendance_model.py` → `get_today_attendance_with_details()` |
+| 3.2.7 | Info bar shows which sections are **scheduled for today** based on section day field | `views/attendance_tab.py` |
+
+---
+
+### 3.3 — Student Registration via Unknown Card
+
+| # | Change | Files |
+|---|--------|-------|
+| 3.3.1 | Unknown card tap → **RegistrationDialog** opens (same as before, but redesigned) | `views/attendance_tab.py` |
+| 3.3.2 | RegistrationDialog now shows **multiple section checkboxes** instead of a single dropdown | `views/dialogs/registration_dialog.py` |
+| 3.3.3 | On save, calls `register_student_with_sections(first, last, card_id, [sec_ids])` | `controllers/student_controller.py` → `register_student_with_sections()` |
+| 3.3.4 | After registration, card is immediately re-processed via `process_rfid_passive()` to mark the new student present in today's sections | `views/attendance_tab.py` |
+| 3.3.5 | There is **no manual "Add Student" button** — all student creation is triggered by an unknown RFID scan | `views/attendance_tab.py`, `views/dialogs/registration_dialog.py` |
+
+---
+
+### 3.4 — Fix: Section Delete FK Constraint
+
+| # | Change | Files |
+|---|--------|-------|
+| 3.4.1 | `delete_section()` now cascades: deletes **attendance → sessions → student_sections → section** in correct FK order | `models/section_model.py` |
+| 3.4.2 | Added `get_sections_for_student_on_day(student_id, day)` helper for passive tap processing | `models/section_model.py` |
+
+---
+
+### 3.5 — Phase 3 Exit Criteria
+
+- [ ] App opens directly to attendance screen (no startup PIN)
+- [ ] Pressing Ctrl+P prompts for PIN; correct PIN opens admin panel; wrong PIN closes the dialog
+- [ ] Admin panel has Sections, Students, Settings tabs fully functional
+- [ ] Section delete no longer fails with FK error
+- [ ] Tapping an RFID card marks the student present in all sections scheduled for today — without pressing any session buttons
+- [ ] Duplicate tap shows yellow flash with "already marked" message
+- [ ] Unknown card tap opens RegistrationDialog with multi-section checkboxes; saving registers the student and marks them present
+- [ ] "Today's Log" list reflects all taps for the current calendar day
+- [ ] Sections info bar shows all sections scheduled for today's weekday
+

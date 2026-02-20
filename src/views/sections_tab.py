@@ -7,7 +7,7 @@ This tab provides full section CRUD so the Phase 1 loop works end-to-end.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 import customtkinter as ctk
 from tkinter import messagebox
 
@@ -143,7 +143,7 @@ class SectionFormDialog(ctk.CTkToplevel):
 class SectionsTab(ctk.CTkFrame):
     """Sections management tab — fully functional in Phase 1."""
 
-    def __init__(self, parent: ctk.CTkFrame, root: ctk.CTk) -> None:
+    def __init__(self, parent: Any, root: Any) -> None:
         super().__init__(parent, fg_color="#1a1a2e", corner_radius=0)
         self._app = root
         self._sections: list = []

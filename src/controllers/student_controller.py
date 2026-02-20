@@ -114,6 +114,81 @@ def register_new_student(
         )
 
 
+def register_student_with_sections(
+    first_name: str,
+    last_name: str,
+    card_id: str,
+    section_ids: list[int],
+) -> RegistrationResult:
+    """
+    Register a new student with a pre-scanned RFID card and multiple section
+    enrolments in a single call.
+
+    Used by the passive-flow registration dialog (unknown card tapped → dialog
+    → this function).
+
+    Args:
+        first_name:   Student's first name.
+        last_name:    Student's last name.
+        card_id:      RFID card id to assign (must be unique).
+        section_ids:  List of section ids to enrol the student in (may be empty).
+
+    Returns:
+        RegistrationResult with success flag and new student_id on success.
+    """
+    first_name = first_name.strip()
+    last_name  = last_name.strip()
+    card_id    = card_id.strip()
+
+    if not first_name or not last_name:
+        return RegistrationResult(
+            success=False,
+            message="First name and last name are required.",
+        )
+
+    if not card_id:
+        return RegistrationResult(
+            success=False,
+            message="Card ID cannot be empty.",
+        )
+
+    existing = student_model.get_student_by_card_id(card_id)
+    if existing is not None:
+        return RegistrationResult(
+            success=False,
+            message=(
+                f"Card '{card_id}' is already assigned to "
+                f"{existing['first_name']} {existing['last_name']}."
+            ),
+        )
+
+    try:
+        student_id = student_model.create_student(first_name, last_name, card_id)
+        for sec_id in section_ids:
+            student_model.assign_section(student_id, sec_id)
+        log_info(
+            f"Registered student id={student_id} name='{first_name} {last_name}' "
+            f"card='{card_id}' sections={section_ids}"
+        )
+        return RegistrationResult(
+            success=True,
+            student_id=student_id,
+            message=f"Student '{first_name} {last_name}' registered successfully.",
+        )
+    except sqlite3.IntegrityError as exc:
+        log_error(f"IntegrityError during register_student_with_sections: {exc}")
+        return RegistrationResult(
+            success=False,
+            message=f"Registration failed — duplicate card or data conflict:\n{exc}",
+        )
+    except sqlite3.Error as exc:
+        log_error(f"DB error during register_student_with_sections: {exc}")
+        return RegistrationResult(
+            success=False,
+            message="A database error occurred during registration.",
+        )
+
+
 def reassign_card(student_id: int, new_card_id: str) -> CardReassignResult:
     """
     Reassign a new RFID card to a student.

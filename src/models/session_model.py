@@ -102,3 +102,21 @@ def close_session(session_id: int) -> None:
             (end_time_str, session_id),
         )
     log_debug(f"Closed session id={session_id} end_time={end_time_str}")
+
+
+def get_or_create_session(section_id: int, date: str) -> int:
+    """
+    Return the id of an existing session for *section_id* on *date*, or create
+    a new one if none exists.
+
+    Args:
+        section_id: FK reference to sections.id.
+        date:       ISO-8601 date string, e.g. '2026-02-20'.
+
+    Returns:
+        The session id (existing or newly created).
+    """
+    existing = get_existing_session_for_date(section_id, date)
+    if existing is not None:
+        return existing["id"]
+    return create_session(section_id)

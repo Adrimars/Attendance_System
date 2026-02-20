@@ -158,3 +158,41 @@ def get_attendance_record(
 def is_duplicate_tap(session_id: int, student_id: int) -> bool:
     """Return True if the student already has an attendance record in this session."""
     return get_attendance_record(session_id, student_id) is not None
+
+
+def get_today_attendance_with_details(today_date: str) -> list[dict]:
+    """
+    Return all attendance records for the given date, enriched with student
+    and section information.
+
+    Args:
+        today_date: ISO-8601 date string, e.g. '2026-02-20'.
+
+    Returns:
+        List of dicts with keys:
+            id, status, method, timestamp,
+            first_name, last_name, card_id,
+            section_name
+        Ordered newest-first.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id,
+                   a.status,
+                   a.method,
+                   a.timestamp,
+                   st.first_name,
+                   st.last_name,
+                   st.card_id,
+                   sec.name AS section_name
+            FROM   attendance a
+            JOIN   sessions   ses ON ses.id        = a.session_id
+            JOIN   sections   sec ON sec.id        = ses.section_id
+            JOIN   students   st  ON st.id         = a.student_id
+            WHERE  ses.date = ?
+            ORDER  BY a.timestamp DESC;
+            """,
+            (today_date,),
+        ).fetchall()
+    return [dict(r) for r in rows]

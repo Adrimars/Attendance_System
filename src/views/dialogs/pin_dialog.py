@@ -37,7 +37,6 @@ class PinDialog(ctk.CTkToplevel):
         super().__init__(parent)
         self.title("Admin PIN")
         self.resizable(False, False)
-        self.grab_set()  # modal
 
         self.granted: bool = False
         self._attempts: int = 0
@@ -47,7 +46,22 @@ class PinDialog(ctk.CTkToplevel):
         self._stored_hash: str = stored_hash
 
         self._build_ui()
-        self._centre(parent)
+
+        # Defer window management until after the first render tick.
+        # On Windows with a fullscreen parent, CTkToplevel children won't
+        # draw unless we wait for the event loop to map the window first.
+        self._parent = parent
+        self.after(50, self._activate)
+
+    def _activate(self) -> None:
+        """Bring the dialog to front and make it modal after first render."""
+        self._centre(self._parent)
+        self.lift()
+        self.focus_force()
+        self.grab_set()
+        self.attributes("-topmost", True)
+        self.after(200, lambda: self.attributes("-topmost", False))
+        self._pin_entry.focus_set()
 
     def _centre(self, parent: ctk.CTk) -> None:
         self.update_idletasks()
@@ -63,7 +77,7 @@ class PinDialog(ctk.CTkToplevel):
 
     def _build_ui(self) -> None:
         self.configure(fg_color="#1a1a2e")
-        pad = {"padx": 30, "pady": 10}
+        PX = 30   # common horizontal padding; pady set per-widget to avoid duplicates
 
         if self._is_first_run:
             title_text = "Create Admin PIN"
@@ -77,14 +91,14 @@ class PinDialog(ctk.CTkToplevel):
             text=title_text,
             font=ctk.CTkFont(size=22, weight="bold"),
             text_color="#e0e0e0",
-        ).pack(**pad, pady=(24, 4))
+        ).pack(padx=PX, pady=(24, 4))
 
         ctk.CTkLabel(
             self,
             text=subtitle_text,
             font=ctk.CTkFont(size=13),
             text_color="#a0a0b0",
-        ).pack(padx=30, pady=(0, 10))
+        ).pack(padx=PX, pady=(0, 10))
 
         self._pin_entry = ctk.CTkEntry(
             self,
@@ -94,7 +108,7 @@ class PinDialog(ctk.CTkToplevel):
             height=44,
             font=ctk.CTkFont(size=16),
         )
-        self._pin_entry.pack(**pad)
+        self._pin_entry.pack(padx=PX, pady=10)
         self._pin_entry.focus_set()
 
         if self._is_first_run:
@@ -106,7 +120,7 @@ class PinDialog(ctk.CTkToplevel):
                 height=44,
                 font=ctk.CTkFont(size=16),
             )
-            self._confirm_entry.pack(**pad)
+            self._confirm_entry.pack(padx=PX, pady=10)
             self._confirm_entry.bind("<Return>", lambda _e: self._submit())
         else:
             self._confirm_entry = None  # type: ignore[assignment]
@@ -117,7 +131,7 @@ class PinDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=12),
             text_color="#ff6b6b",
         )
-        self._status_label.pack(padx=30, pady=(0, 6))
+        self._status_label.pack(padx=PX, pady=(0, 6))
 
         btn_text = "Set PIN" if self._is_first_run else "Unlock"
         ctk.CTkButton(
@@ -129,7 +143,7 @@ class PinDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=15, weight="bold"),
             fg_color="#2563eb",
             hover_color="#1d4ed8",
-        ).pack(**pad, pady=(0, 24))
+        ).pack(padx=30, pady=(0, 24))
 
         self._pin_entry.bind("<Return>", lambda _e: self._submit())
         self.protocol("WM_DELETE_WINDOW", self._on_close)

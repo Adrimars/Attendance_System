@@ -11,13 +11,14 @@ Features:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 import customtkinter as ctk
 from tkinter import messagebox
 
 import controllers.student_controller as student_ctrl
 from views.dialogs.student_edit_dialog import StudentEditDialog
+from views.dialogs.manual_attendance_dialog import ManualAttendanceDialog
 from utils.logger import log_info, log_warning
 
 
@@ -32,7 +33,7 @@ _COLUMNS: list[tuple[str, str, int]] = [
 class StudentsTab(ctk.CTkFrame):
     """Students management tab — fully implemented in Phase 2."""
 
-    def __init__(self, parent: ctk.CTkFrame, root: ctk.CTk) -> None:
+    def __init__(self, parent: Any, root: Any) -> None:
         super().__init__(parent, fg_color="#1a1a2e", corner_radius=0)
         self._app = root
 
@@ -116,7 +117,7 @@ class StudentsTab(ctk.CTkFrame):
 
         # Spacer for action buttons column
         ctk.CTkLabel(
-            self._col_hdr, text="", width=200,
+            self._col_hdr, text="", width=300,
         ).pack(side="left", padx=4)
 
         # ── Scrollable list ───────────────────────────────────────────────────
@@ -222,9 +223,17 @@ class StudentsTab(ctk.CTkFrame):
         ).pack(side="left", padx=4)
 
         # Action buttons
-        btn_frame = ctk.CTkFrame(row, fg_color="transparent", width=196)
+        btn_frame = ctk.CTkFrame(row, fg_color="transparent", width=296)
         btn_frame.pack(side="right", padx=8)
         btn_frame.pack_propagate(False)
+
+        ctk.CTkButton(
+            btn_frame, text="Attendance", width=94, height=32,
+            fg_color="#065f46", hover_color="#047857",
+            font=ctk.CTkFont(size=12),
+            command=lambda sid=row_data["id"], n=row_data["full_name"]:
+                self._open_attendance_dialog(sid, n),
+        ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
             btn_frame, text="Edit", width=86, height=32,
@@ -279,6 +288,10 @@ class StudentsTab(ctk.CTkFrame):
         self._app.wait_window(dlg)
         if dlg.saved:
             self._load()
+
+    def _open_attendance_dialog(self, student_id: int, full_name: str) -> None:
+        dlg = ManualAttendanceDialog(self._app, student_id, full_name)
+        self._app.wait_window(dlg)
 
     def _delete_student(self, student_id: int, full_name: str) -> None:
         if not messagebox.askyesno(

@@ -85,15 +85,34 @@ def update_section(
 
 def delete_section(section_id: int) -> None:
     """
-    Delete a section and all student enrolments for that section.
-    Sessions and attendance records are retained for audit purposes.
+    Delete a section and all related data in the correct FK order:
+      1. attendance records whose session belongs to this section
+      2. sessions belonging to this section
+      3. student_sections enrolments
+      4. the section itself
     """
     with get_connection() as conn:
+        # 1. Remove attendance records linked to this section's sessions
+        conn.execute(
+            """
+            DELETE FROM attendance
+            WHERE session_id IN (
+                SELECT id FROM sessions WHERE section_id = ?
+            );
+            """,
+            (section_id,),
+        )
+        # 2. Remove sessions for this section
+        conn.execute(
+            "DELETE FROM sessions WHERE section_id = ?;", (section_id,)
+        )
+        # 3. Remove student enrolments
         conn.execute(
             "DELETE FROM student_sections WHERE section_id = ?;", (section_id,)
         )
+        # 4. Remove the section row itself
         conn.execute("DELETE FROM sections WHERE id = ?;", (section_id,))
-    log_debug(f"Deleted section id={section_id}")
+    log_debug(f"Deleted section id={section_id} (cascade)")
 
 
 def get_enrolled_students(section_id: int) -> list[sqlite3.Row]:
@@ -108,5 +127,24 @@ def get_enrolled_students(section_id: int) -> list[sqlite3.Row]:
             ORDER BY st.last_name, st.first_name;
             """,
             (section_id,),
+        ).fetchall()
+    return rows
+
+
+def get_sections_for_student_on_day(student_id: int, day: str) -> list[sqlite3.Row]:
+    """
+    Return all sections the given student is enrolled in that are scheduled
+    on the specified weekday (case-insensitive match, e.g. 'Monday').
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.*
+            FROM sections s
+            JOIN student_sections ss ON ss.section_id = s.id
+            WHERE ss.student_id = ?
+              AND LOWER(s.day) = LOWER(?);
+            """,
+            (student_id, day),
         ).fetchall()
     return rows
