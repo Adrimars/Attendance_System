@@ -1,0 +1,25 @@
+{
+  "prompts": {
+    "/generate-prd": {
+      "path": ".github/prompts/generate-prd.prompt.md",
+      "description": "Generate a complete PRD from a project brief",
+      "title": "Generate PRD"
+    },
+    "/decompose-epics": {
+      "path": ".github/prompts/decompose-epics.prompt.md",
+      "description": "Break down a PRD into 3-4 high-level Epics",
+      "title": "Decompose into Epics"
+    },
+    "/decompose-stories": {
+      "path": ".github/prompts/decompose-stories.prompt.md",
+      "description": "Break down an Epic into 5-7 User Stories",
+      "title": "Decompose into Stories"
+    }
+  },
+  "contextFilters": {
+    "specs": {
+      "include": ["specs/templates/**", "specs/prd/**", "specs/epics/**", "specs/stories/**"],
+      "description": "Product specification files"
+    }
+  }
+}
