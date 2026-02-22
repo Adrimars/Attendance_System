@@ -1,6 +1,6 @@
 # RFID Attendance System
 
-> A full-screen Windows kiosk application for tracking student attendance in a dance studio using RFID card readers. Built with Python, CustomTkinter, and SQLite3.
+> Specifically created for IZTECH World Dance Socicty. A full-screen Windows kiosk application for tracking student attendance in a dance class using RFID card readers. Built with Python, CustomTkinter, and SQLite3.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
@@ -165,30 +165,6 @@ Attendance_System/
 └── README.md
 ```
 
----
-
-## Configuration & Secrets
-
-| Setting | Storage | Committed to Git? |
-|---|---|---|
-| Admin PIN (hashed) | `attendance.db` (SQLite) | ❌ No — DB is gitignored |
-| Google Sheets URL | `attendance.db` (SQLite) | ❌ No — DB is gitignored |
-| Google credentials path | `attendance.db` (SQLite) | ❌ No — DB is gitignored |
-| Service account `.json` | User-selected local file | ❌ No — pattern excluded in `.gitignore` |
-
-**No secrets are ever stored in source code.** All sensitive settings are stored in the local SQLite database file (`attendance.db`) which is excluded from version control by `.gitignore`.
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature-name`
-3. Commit your changes: `git commit -m "feat: add your feature"`
-4. Push to the branch: `git push origin feature/your-feature-name`
-5. Open a Pull Request
-
----
 
 ## License
 
