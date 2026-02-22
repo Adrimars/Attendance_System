@@ -22,6 +22,15 @@ import models.section_model as section_model
 import models.session_model as session_model
 from utils.logger import log_info, log_error, log_warning
 
+# ── Locale-independent weekday helper ─────────────────────────────────────────
+_ENGLISH_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday',
+                 'Friday', 'Saturday', 'Sunday']
+
+
+def _english_weekday(dt: datetime) -> str:
+    """Return English weekday name regardless of OS locale."""
+    return _ENGLISH_DAYS[dt.weekday()]
+
 
 class TapResultType(Enum):
     """Describes the outcome of a card tap so the view can display the right feedback."""
@@ -287,7 +296,7 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
             )
 
         today_date: str = date.today().isoformat()           # 'YYYY-MM-DD'
-        today_day: str  = datetime.now().strftime("%A")      # 'Monday' … 'Sunday'
+        today_day: str  = _english_weekday(datetime.now())   # 'Monday' … 'Sunday'
 
         sections_today = section_model.get_sections_for_student_on_day(student_id, today_day)
 
@@ -475,7 +484,7 @@ def get_daily_report(date_str: str) -> dict:
     """
     from models.database import get_connection as _gc
     try:
-        today_day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+        today_day = _english_weekday(datetime.strptime(date_str, "%Y-%m-%d"))
     except ValueError:
         today_day = ""
 
@@ -723,7 +732,6 @@ def _write_attendance_pdf(
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     from reportlab.lib.enums import TA_CENTER
 
-    page_width, page_height = landscape(A4)
     doc = SimpleDocTemplate(
         filepath,
         pagesize=landscape(A4),

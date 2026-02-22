@@ -23,7 +23,7 @@ import customtkinter as ctk
 
 import controllers.attendance_controller as attendance_ctrl
 import controllers.section_controller as section_ctrl
-from controllers.attendance_controller import TapResultType, PassiveTapResult
+from controllers.attendance_controller import TapResultType, PassiveTapResult, _english_weekday
 from views.dialogs.registration_dialog import RegistrationDialog
 from views.dialogs.section_assign_dialog import SectionAssignDialog
 from utils.logger import log_info, log_error, log_warning
@@ -185,7 +185,7 @@ class AttendanceTab(ctk.CTkFrame):
 
     def _refresh_today_sections(self) -> None:
         """Update the sections info bar with sections scheduled for today."""
-        today_day = datetime.now().strftime("%A")
+        today_day = _english_weekday(datetime.now())
         all_secs  = section_ctrl.get_all_sections()
         today_secs = [
             s for s in all_secs

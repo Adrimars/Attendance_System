@@ -311,7 +311,7 @@ class StudentsTab(ctk.CTkFrame):
         if not messagebox.askyesno(
             "Delete Student",
             f"Delete student '{full_name}'?\n\n"
-            "Their attendance history will be retained for audit purposes.",
+            "All their attendance records will also be permanently deleted.",
             parent=self._app,
         ):
             return

@@ -421,6 +421,7 @@ class SettingsTab(ctk.CTkFrame):
             self._creds_status.configure(
                 text="File not found — please check the path.", text_color="#f59e0b"
             )
+            return
         try:
             settings_model.set_setting("google_credentials_path", path)
         except Exception as exc:

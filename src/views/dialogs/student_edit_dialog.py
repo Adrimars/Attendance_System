@@ -387,7 +387,7 @@ class StudentEditDialog(ctk.CTkToplevel):
         if not messagebox.askyesno(
             "Delete Student",
             f"Permanently delete '{name}'?\n\n"
-            "Their attendance history will be retained for audit purposes.",
+            "All their attendance records will also be permanently deleted.",
             parent=self,
         ):
             return

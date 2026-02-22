@@ -41,11 +41,12 @@ def create_backup(db_path: str | Path) -> tuple[bool, str]:
         log_warning(f"Backup skipped — {msg}")
         return False, msg
 
-    _BACKUP_DIR.mkdir(exist_ok=True)
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(exist_ok=True)
 
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"attendance_{timestamp}.db"
-    backup_path = _BACKUP_DIR / backup_name
+    backup_path = backup_dir / backup_name
 
     try:
         shutil.copy2(db_path, backup_path)
@@ -54,14 +55,14 @@ def create_backup(db_path: str | Path) -> tuple[bool, str]:
         log_warning(f"Backup failed: {exc}")
         return False, str(exc)
 
-    _prune_old_backups()
+    _prune_old_backups(backup_dir)
     return True, str(backup_path)
 
 
-def _prune_old_backups() -> None:
+def _prune_old_backups(backup_dir: Path) -> None:
     """Keep only the most recent MAX_BACKUPS backup files."""
     backups = sorted(
-        _BACKUP_DIR.glob("attendance_*.db"),
+        backup_dir.glob("attendance_*.db"),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )

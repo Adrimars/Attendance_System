@@ -199,7 +199,7 @@ def initialise_database() -> None:
     Safe to call on every startup.
     """
     log_info(f"Initialising database at {DB_PATH}")
-    conn = _get_raw_connection()
+    conn = _get_cached_connection()
     try:
         cursor = conn.cursor()
 
@@ -233,7 +233,8 @@ def initialise_database() -> None:
             log_info(f"Cleaned up {row_count} duplicate schema_version rows → kept v{max_ver}.")
 
         conn.commit()
-        log_debug(f"Schema initialised at version {_SCHEMA_VERSION}.")
+        stored_ver = cursor.execute("SELECT version FROM schema_version;").fetchone()[0]
+        log_debug(f"Schema initialised at version {stored_ver}.")
 
         # Run any pending migrations
         _run_migrations(cursor, conn)
@@ -242,8 +243,6 @@ def initialise_database() -> None:
         conn.rollback()
         log_error(f"Schema initialisation failed: {exc}")
         raise
-    finally:
-        conn.close()
 
 
 def _run_migrations(cursor: sqlite3.Cursor, conn: sqlite3.Connection) -> None:
