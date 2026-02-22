@@ -1,0 +1,6 @@
+# Only the exe, README, and LICENSE are tracked in this branch.
+*
+!.gitignore
+!AttendanceSystem.exe
+!README.md
+!LICENSE
