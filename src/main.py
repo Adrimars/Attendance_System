@@ -24,6 +24,7 @@ if _ROOT_DIR not in sys.path:
 import customtkinter as ctk
 
 from utils.logger import log_info, log_error, log_startup, log_shutdown
+from utils.localization import load_from_settings as load_language
 from models.database import initialise_database, close_connection
 from views.app import App
 
@@ -66,6 +67,8 @@ def main() -> None:
     try:
         initialise_database()
         log_info("Database initialised successfully.")
+        load_language()
+        log_info(f"Language loaded.")
     except Exception as exc:
         log_error(f"Fatal: database initialisation failed — {exc}")
         # Show a plain-tkinter error before the CTk window exists

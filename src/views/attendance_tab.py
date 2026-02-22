@@ -27,11 +27,13 @@ from controllers.attendance_controller import TapResultType, PassiveTapResult
 from views.dialogs.registration_dialog import RegistrationDialog
 from views.dialogs.section_assign_dialog import SectionAssignDialog
 from utils.logger import log_info, log_error, log_warning
+from utils.localization import t
 
 # -- Colour palette -------------------------------------------------------
 _FLASH_GREEN  = "#166534"
 _FLASH_RED    = "#7f1d1d"
 _FLASH_YELLOW = "#713f12"
+_FLASH_PURPLE = "#3b1f5e"   # inactive student scan
 _BASE_BG      = "#1a1a2e"
 _FLASH_MS     = 2500
 
@@ -43,10 +45,15 @@ class AttendanceTab(ctk.CTkFrame):
         super().__init__(parent, fg_color=_BASE_BG, corner_radius=0)
         self._app  = root
         self._flash_job: Optional[str] = None
+        # Log optimisation: track which record IDs have already been rendered
+        self._log_rendered_ids: set[int] = set()
+        self._no_taps_lbl: Optional[ctk.CTkLabel] = None
+        # Keep refs to column-header labels so _apply_language() can retranslate them
+        self._col_labels: list[ctk.CTkLabel] = []
 
         self._build_ui()
         self._refresh_today_sections()
-        self._refresh_log()
+        self._full_refresh_log()
 
     # -------------------------------------------------------------------------
     # UI construction
@@ -81,7 +88,7 @@ class AttendanceTab(ctk.CTkFrame):
 
         self._sections_lbl = ctk.CTkLabel(
             self._sections_bar,
-            text="Loading sections...",
+            text=t("loading_sections"),
             font=ctk.CTkFont(size=13),
             text_color="#a0a0b0",
         )
@@ -90,7 +97,7 @@ class AttendanceTab(ctk.CTkFrame):
         # Listening status indicator (right side of sections bar)
         self._listen_dot = ctk.CTkLabel(
             self._sections_bar,
-            text="● LISTENING",
+            text=t("listening"),
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color="#4ade80",
         )
@@ -100,7 +107,7 @@ class AttendanceTab(ctk.CTkFrame):
         #DELETABLE !!!!!
         self._sim_toggle_btn = ctk.CTkButton(
             self._sections_bar,
-            text="💻  Sim",
+            text="💻  Manual",
             width=72, height=28,
             fg_color="#78350f", hover_color="#92400e",
             font=ctk.CTkFont(size=11),
@@ -115,7 +122,7 @@ class AttendanceTab(ctk.CTkFrame):
 
         self._feedback_lbl = ctk.CTkLabel(
             self._banner,
-            text="Waiting for card tap...",
+            text=t("waiting_for_card"),
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color="#c0c0d0",
         )
@@ -143,18 +150,21 @@ class AttendanceTab(ctk.CTkFrame):
         self._log_hdr = ctk.CTkFrame(self, fg_color="#0f0f23", corner_radius=0)
         self._log_hdr.pack(fill="x", padx=24)
 
-        for col, width in [
-            ("Student",  280),
-            ("Section",  220),
-            ("Status",    90),
-            ("Method",    80),
-            ("Time",     130),
+        self._col_labels = []
+        for col_key, width in [
+            ("col_student", 280),
+            ("col_section", 220),
+            ("col_status",   90),
+            ("col_method",   80),
+            ("col_time",    130),
         ]:
-            ctk.CTkLabel(
-                self._log_hdr, text=col,
+            lbl = ctk.CTkLabel(
+                self._log_hdr, text=t(col_key),
                 font=ctk.CTkFont(size=12, weight="bold"),
                 text_color="#6b7280", width=width, anchor="w",
-            ).pack(side="left", padx=8, pady=6)
+            )
+            lbl.pack(side="left", padx=8, pady=6)
+            self._col_labels.append(lbl)
 
         self._log_frame = ctk.CTkScrollableFrame(
             self, fg_color="#111125", corner_radius=0,
@@ -185,30 +195,70 @@ class AttendanceTab(ctk.CTkFrame):
             names = ",  ".join(
                 f"{s['name']} ({s['time']})" for s in today_secs
             )
-            text = f"Today ({today_day}):  {names}"
+            text = f"{t('today_prefix')} ({today_day}):  {names}"
         else:
-            text = f"No sections scheduled for today ({today_day})"
+            text = f"{t('no_sections_today')} ({today_day})"
         self._sections_lbl.configure(text=text)
 
-    def _refresh_log(self) -> None:
-        """Rebuild the today's-log list from the DB."""
+    def _full_refresh_log(self) -> None:
+        """Destroy all log rows and rebuild them from the database (full refresh)."""
         for w in self._log_frame.winfo_children():
             w.destroy()
+        self._log_rendered_ids.clear()
+        self._no_taps_lbl = None
 
         records = attendance_ctrl.get_today_log()
         if not records:
-            ctk.CTkLabel(
+            self._no_taps_lbl = ctk.CTkLabel(
                 self._log_frame,
-                text="No taps recorded today.",
+                text=t("no_taps_today"),
                 font=ctk.CTkFont(size=13),
                 text_color="#6b7280",
-            ).pack(pady=20)
+            )
+            self._no_taps_lbl.pack(pady=20)
             return
 
         for rec in records:
-            self._add_log_row(rec)
+            row = self._build_log_row(rec)
+            row.pack(fill="x", pady=2, padx=4)
+            self._log_rendered_ids.add(rec["id"])
 
-    def _add_log_row(self, rec: dict) -> None:
+    def _refresh_log(self) -> None:
+        """Incrementally prepend any new log rows that are not yet rendered.
+
+        Fetches today\'s records from the DB and only creates widgets for IDs
+        not already in ``self._log_rendered_ids``, making repeated calls after
+        every card tap much cheaper than a full rebuild.
+        """
+        records = attendance_ctrl.get_today_log()
+        new_records = [r for r in records if r["id"] not in self._log_rendered_ids]
+        if not new_records:
+            return
+
+        # Remove the "no taps" placeholder label if it is still showing
+        if self._no_taps_lbl is not None:
+            try:
+                self._no_taps_lbl.destroy()
+            except Exception:
+                pass
+            self._no_taps_lbl = None
+
+        # Insert new rows before the current top child so newest stay at the top.
+        # new_records comes newest-first from the DB, so iterating and always
+        # inserting before the same original top widget produces the right order.
+        existing = self._log_frame.winfo_children()
+        top_ref = existing[0] if existing else None
+
+        for rec in new_records:
+            row = self._build_log_row(rec)
+            if top_ref is not None:
+                row.pack(fill="x", pady=2, padx=4, before=top_ref)
+            else:
+                row.pack(fill="x", pady=2, padx=4)
+            self._log_rendered_ids.add(rec["id"])
+
+    def _build_log_row(self, rec: dict) -> ctk.CTkFrame:
+        """Build and return a single attendance log row widget (not packed)."""
         status = rec["status"]
         row_fg = (
             "#0d2b0d" if status == "Present" else
@@ -216,7 +266,6 @@ class AttendanceTab(ctk.CTkFrame):
             "#1e1e35"
         )
         row = ctk.CTkFrame(self._log_frame, fg_color=row_fg, corner_radius=6)
-        row.pack(fill="x", pady=2, padx=4)
 
         ctk.CTkLabel(
             row,
@@ -261,6 +310,28 @@ class AttendanceTab(ctk.CTkFrame):
             font=ctk.CTkFont(size=12), text_color="#9ca3af",
             width=130, anchor="w",
         ).pack(side="left", padx=8)
+
+        return row
+
+    def _apply_language(self) -> None:
+        """Update all translatable widget texts to the currently active language."""
+        col_keys = ["col_student", "col_section", "col_status", "col_method", "col_time"]
+        for lbl, key in zip(self._col_labels, col_keys):
+            lbl.configure(text=t(key))
+
+        # Listening indicator
+        current_dot = self._listen_dot.cget("text")
+        is_listening = current_dot not in ("◌ IDLE", "◌ BEKLİYOR")
+        self._listen_dot.configure(text=t("listening") if is_listening else t("idle"))
+
+        # Banner — only update if still showing the default idle message
+        current_banner = self._feedback_lbl.cget("text")
+        idle_msgs = {"Waiting for card tap...", "Kart bekleniyor..."}
+        if current_banner in idle_msgs:
+            self._feedback_lbl.configure(text=t("waiting_for_card"))
+
+        # Sections bar and date
+        self._refresh_today_sections()
 
     # -------------------------------------------------------------------------
     # RFID event handler
@@ -366,9 +437,9 @@ class AttendanceTab(ctk.CTkFrame):
 
     def _set_listening(self, active: bool) -> None:
         if active:
-            self._listen_dot.configure(text="● LISTENING", text_color="#4ade80")
+            self._listen_dot.configure(text=t("listening"), text_color="#4ade80")
         else:
-            self._listen_dot.configure(text="◌ IDLE",      text_color="#6b7280")
+            self._listen_dot.configure(text=t("idle"),      text_color="#6b7280")
 
     # -------------------------------------------------------------------------
     # RFID / card processing
@@ -391,11 +462,20 @@ class AttendanceTab(ctk.CTkFrame):
         result = attendance_ctrl.process_rfid_passive(card_id)
 
         if result.result_type == TapResultType.KNOWN_PRESENT:
-            self._flash(_FLASH_GREEN, result.message)
+            if result.is_inactive:
+                # Student is flagged inactive — purple flash to alert operator
+                inactive_msg = f"⚠ INACTIVE — {result.message}"
+                self._flash(_FLASH_PURPLE, inactive_msg)
+            else:
+                self._flash(_FLASH_GREEN, result.message)
             self._refresh_log()
 
         elif result.result_type == TapResultType.DUPLICATE_TAP:
-            self._flash(_FLASH_YELLOW, result.message)
+            if result.is_inactive:
+                dup_msg = f"⚠ INACTIVE — {result.message}"
+                self._flash(_FLASH_PURPLE, dup_msg)
+            else:
+                self._flash(_FLASH_YELLOW, result.message)
 
         elif result.result_type == TapResultType.UNKNOWN_CARD:
             self._flash(_FLASH_RED, "Unknown card -- please complete registration.")
@@ -495,7 +575,7 @@ class AttendanceTab(ctk.CTkFrame):
     def _reset_banner(self) -> None:
         self._banner.configure(fg_color=_BASE_BG)
         self._feedback_lbl.configure(
-            text="Waiting for card tap...", text_color="#c0c0d0"
+            text=t("waiting_for_card"), text_color="#c0c0d0"
         )
         self._flash_job = None
 
@@ -506,6 +586,6 @@ class AttendanceTab(ctk.CTkFrame):
     def on_tab_selected(self) -> None:
         """Called by App whenever the Attendance tab is focused."""
         self._date_lbl.configure(text=self._today_label())
-        self._refresh_today_sections()
-        self._refresh_log()
+        self._apply_language()
+        self._full_refresh_log()
         self._rfid_entry.focus_set()

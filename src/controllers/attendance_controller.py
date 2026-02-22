@@ -8,10 +8,12 @@ TapResult.
 
 from __future__ import annotations
 
+import csv
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum, auto
+from pathlib import Path
 from typing import Optional
 
 import models.attendance_model as attendance_model
@@ -211,9 +213,12 @@ class PassiveTapResult:
     student_id: Optional[int] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    sections_marked: list = field(default_factory=list)   # names of newly-marked sections
+    sections_marked: list = field(default_factory=list)    # names of newly-marked sections
     sections_duplicate: list = field(default_factory=list) # names of already-marked sections
     message: str = ""
+    is_inactive: bool = False    # True if student is currently flagged inactive
+    attended: int = 0            # Total 'Present' records across all enrolled sessions
+    total_sessions: int = 0      # Total sessions across all enrolled sections
 
 
 def process_rfid_passive(card_id: str) -> PassiveTapResult:
@@ -254,8 +259,12 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
         student_id: int  = student["id"]
         first_name: str  = student["first_name"]
         last_name: str   = student["last_name"]
+        is_inactive: bool = bool(student["is_inactive"])
 
-        # ── Check if student has ANY sections enrolled at all ────────────────────
+        # Attendance summary for the banner (fetched before the current tap is applied)
+        attended, total_sessions = attendance_model.get_student_attendance_summary(student_id)
+
+        # ── Check if student has ANY sections enrolled at all ─────────────────────
         all_enrolled = student_model.get_sections_for_student(student_id)
         if not all_enrolled:
             log_info(
@@ -268,6 +277,9 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
                 student_id=student_id,
                 first_name=first_name,
                 last_name=last_name,
+                is_inactive=is_inactive,
+                attended=attended,
+                total_sessions=total_sessions,
                 message=(
                     f"{first_name} {last_name} has no sections assigned. "
                     "Please select their sections."
@@ -291,6 +303,9 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
                 first_name=first_name,
                 last_name=last_name,
                 sections_marked=[],
+                is_inactive=is_inactive,
+                attended=attended,
+                total_sessions=total_sessions,
                 message=f"{first_name} {last_name} — no sections today ({today_day}).",
             )
 
@@ -311,15 +326,22 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
                 f"sections_marked={newly_marked}"
             )
             result_type = TapResultType.KNOWN_PRESENT
+            # Re-fetch summary AFTER marking so the count reflects this tap
+            attended_now, total_now = attendance_model.get_student_attendance_summary(student_id)
             message = (
-                f"{first_name} {last_name} — present: {', '.join(newly_marked)}"
+                f"{first_name} {last_name} — present: {', '.join(newly_marked)} "
+                f"| {attended_now}/{total_now} sessions"
             )
+            # Student just attended — re-evaluate inactive status (may become active again)
+            _refresh_inactive_status_for(student_id)
+            is_inactive = bool(student_model.get_student_by_id(student_id)["is_inactive"])
         else:
             log_info(
                 f"Passive tap duplicate: student_id={student_id} "
                 f"all sections already marked={already_marked}"
             )
             result_type = TapResultType.DUPLICATE_TAP
+            attended_now, total_now = attended, total_sessions
             message = (
                 f"{first_name} {last_name} already marked today: "
                 f"{', '.join(already_marked)}"
@@ -333,6 +355,9 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
             last_name=last_name,
             sections_marked=newly_marked,
             sections_duplicate=already_marked,
+            is_inactive=is_inactive,
+            attended=attended_now,
+            total_sessions=total_now,
             message=message,
         )
 
@@ -381,6 +406,144 @@ def mark_present_for_enrolled_sections(
                 f"student={student_id} section={sec_id} — {exc}"
             )
     return marked
+
+
+# ── Inactive-student helpers ──────────────────────────────────────────────────
+
+def _refresh_inactive_status_for(student_id: int) -> None:
+    """
+    Re-evaluate a single student's inactive flag based on their consecutive
+    absences versus the ``inactive_threshold`` setting.
+    Call this after any attendance change that could affect the student.
+    """
+    import models.settings_model as _sm
+    threshold = int(_sm.get_setting("inactive_threshold") or 3)
+    consec = attendance_model.get_consecutive_recent_absences(student_id)
+    should_be_inactive = consec >= threshold
+    current = student_model.get_student_by_id(student_id)
+    if current is not None and bool(current["is_inactive"]) != should_be_inactive:
+        student_model.set_inactive_status(student_id, should_be_inactive)
+        log_info(
+            f"Student id={student_id} marked "
+            f"{'inactive' if should_be_inactive else 'active'} "
+            f"(consecutive absences: {consec}, threshold: {threshold})"
+        )
+
+
+def refresh_inactive_status_all() -> tuple[int, int]:
+    """
+    Recompute the inactive flag for every student and persist any changes.
+
+    Returns:
+        (newly_inactive_count, newly_active_count) — number of status changes made.
+    """
+    import models.settings_model as _sm
+    threshold = int(_sm.get_setting("inactive_threshold") or 3)
+    students = student_model.get_all_students()
+    became_inactive = 0
+    became_active = 0
+    for stu in students:
+        sid = stu["id"]
+        consec = attendance_model.get_consecutive_recent_absences(sid)
+        should = consec >= threshold
+        currently = bool(stu["is_inactive"])
+        if currently != should:
+            student_model.set_inactive_status(sid, should)
+            if should:
+                became_inactive += 1
+            else:
+                became_active += 1
+    log_info(
+        f"refresh_inactive_status_all: +{became_inactive} inactive, "
+        f"+{became_active} re-activated (threshold={threshold})"
+    )
+    return became_inactive, became_active
+
+
+def get_daily_report(date_str: str) -> dict:
+    """
+    Build a summary dict for the given date.
+
+    Inactive students are excluded from all totals.
+
+    Returns a dict with:
+        date          — the date string
+        total_active  — distinct active students enrolled in any section today
+        present_count — of those, how many were marked Present in at least one section
+        absent_count  — total_active - present_count
+        sections      — list of dicts {name, present, absent, total}
+    """
+    from models.database import get_connection as _gc
+    try:
+        today_day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+    except ValueError:
+        today_day = ""
+
+    with _gc() as conn:
+        # Active students enrolled in sections whose day matches today
+        enrolled_rows = conn.execute(
+            """
+            SELECT DISTINCT s.id,
+                            sec.id   AS sec_id,
+                            sec.name AS sec_name
+            FROM   students s
+            JOIN   student_sections ss ON ss.student_id  = s.id
+            JOIN   sections         sec ON sec.id         = ss.section_id
+            WHERE  sec.day      = ?
+              AND  s.is_inactive = 0;
+            """,
+            (today_day,),
+        ).fetchall()
+
+        # Present records today (any section)
+        present_rows = conn.execute(
+            """
+            SELECT DISTINCT a.student_id,
+                            sec.id AS sec_id
+            FROM   attendance a
+            JOIN   sessions sess ON sess.id   = a.session_id
+            JOIN   sections sec  ON sec.id    = sess.section_id
+            WHERE  sess.date  = ?
+              AND  a.status   = 'Present';
+            """,
+            (date_str,),
+        ).fetchall()
+
+    present_set: set[tuple[int, int]] = {
+        (r["student_id"], r["sec_id"]) for r in present_rows
+    }
+
+    sec_data: dict[int, dict] = {}
+    total_active_students: set[int] = set()
+    present_students: set[int] = set()
+
+    for row in enrolled_rows:
+        sid    = row["id"]
+        sec_id = row["sec_id"]
+        total_active_students.add(sid)
+        if sec_id not in sec_data:
+            sec_data[sec_id] = {
+                "name": row["sec_name"],
+                "present": 0,
+                "absent": 0,
+                "total": 0,
+            }
+        sec_data[sec_id]["total"] += 1
+        if (sid, sec_id) in present_set:
+            present_students.add(sid)
+            sec_data[sec_id]["present"] += 1
+        else:
+            sec_data[sec_id]["absent"] += 1
+
+    total   = len(total_active_students)
+    present = len(present_students)
+    return {
+        "date":          date_str,
+        "total_active":  total,
+        "present_count": present,
+        "absent_count":  total - present,
+        "sections":      list(sec_data.values()),
+    }
 
 
 def get_student_attendance_overview(student_id: int, date_str: str) -> list[dict]:
@@ -462,3 +625,420 @@ def get_today_log() -> list[dict]:
     return attendance_model.get_today_attendance_with_details(
         date.today().isoformat()
     )
+
+
+# ── CSV Export ─────────────────────────────────────────────────────────────────
+
+_CSV_FIELDS = ["date", "first_name", "last_name", "section_name",
+               "status", "method", "timestamp"]
+
+
+def _write_attendance_csv(records: list[dict], filepath: str) -> None:
+    """Write a list of attendance record dicts to a UTF-8 BOM CSV file.
+
+    The BOM ensures Excel on Windows opens the file with the correct encoding.
+    """
+    with open(filepath, "w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=_CSV_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for rec in records:
+            ts = rec.get("timestamp", "")
+            # Extract the date portion from the ISO-8601 timestamp
+            try:
+                date_part = datetime.fromisoformat(ts).date().isoformat()
+            except Exception:
+                date_part = rec.get("date", "")
+            writer.writerow({
+                "date":         date_part,
+                "first_name":   rec.get("first_name", ""),
+                "last_name":    rec.get("last_name", ""),
+                "section_name": rec.get("section_name", ""),
+                "status":       rec.get("status", ""),
+                "method":       rec.get("method", ""),
+                "timestamp":    ts,
+            })
+
+
+def export_today_to_csv(filepath: str) -> tuple[bool, str]:
+    """Export today's attendance records to a CSV file.
+
+    Args:
+        filepath: Absolute path (including filename) for the output file.
+
+    Returns:
+        (True, filepath)     on success.
+        (False, error_msg)   on failure.
+    """
+    try:
+        records = get_today_log()
+        _write_attendance_csv(records, filepath)
+        log_info(f"Exported today's attendance to CSV: {filepath} ({len(records)} rows)")
+        return True, filepath
+    except Exception as exc:
+        log_error(f"CSV export (today) failed: {exc}")
+        return False, str(exc)
+
+
+def export_all_to_csv(filepath: str) -> tuple[bool, str]:
+    """Export every attendance record in the database to a CSV file.
+
+    Args:
+        filepath: Absolute path (including filename) for the output file.
+
+    Returns:
+        (True, filepath)     on success.
+        (False, error_msg)   on failure.
+    """
+    try:
+        records = attendance_model.get_all_attendance_with_details()
+        _write_attendance_csv(records, filepath)
+        log_info(f"Exported all attendance to CSV: {filepath} ({len(records)} rows)")
+        return True, filepath
+    except Exception as exc:
+        log_error(f"CSV export (all) failed: {exc}")
+        return False, str(exc)
+
+
+# ── PDF export helpers ────────────────────────────────────────────────────────
+
+def _write_attendance_pdf(
+    records: list[dict],
+    filepath: str,
+    title: str = "Attendance Report",
+) -> None:
+    """Render *records* as a styled PDF table using ReportLab.
+
+    Columns: Date | First Name | Last Name | Section | Status | Method
+    Each row is colour-coded by status (green = Present, red = Absent).
+
+    Args:
+        records:  List of dicts as returned by the attendance model helpers.
+        filepath: Destination file path (must end with .pdf).
+        title:    Heading text shown at the top of the document.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.enums import TA_CENTER
+
+    page_width, page_height = landscape(A4)
+    doc = SimpleDocTemplate(
+        filepath,
+        pagesize=landscape(A4),
+        leftMargin=1.5 * cm,
+        rightMargin=1.5 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ReportTitle",
+        parent=styles["Title"],
+        fontSize=18,
+        spaceAfter=4,
+        textColor=colors.HexColor("#1e3a5f"),
+        alignment=TA_CENTER,
+    )
+    sub_style = ParagraphStyle(
+        "ReportSub",
+        parent=styles["Normal"],
+        fontSize=9,
+        textColor=colors.HexColor("#6b7280"),
+        alignment=TA_CENTER,
+        spaceAfter=12,
+    )
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    present_count = sum(1 for r in records if r.get("status") == "Present")
+    absent_count  = len(records) - present_count
+
+    story = [
+        Paragraph(title, title_style),
+        Paragraph(
+            f"Generated: {generated_at} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"Total: {len(records)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"Present: {present_count} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"Absent: {absent_count}",
+            sub_style,
+        ),
+        Spacer(1, 0.2 * cm),
+    ]
+
+    # ── Build table data ───────────────────────────────────────────────────────
+    headers = ["#", "Date", "First Name", "Last Name", "Section", "Status", "Method"]
+    col_widths = [1.0 * cm, 2.6 * cm, 3.8 * cm, 3.8 * cm, 4.5 * cm, 2.4 * cm, 2.6 * cm]
+
+    table_data = [headers]
+    row_colors: list[tuple[int, colors.Color]] = []  # (row_index, fill_color)
+
+    STATUS_PRESENT_BG = colors.HexColor("#dcfce7")
+    STATUS_ABSENT_BG  = colors.HexColor("#fee2e2")
+
+    for i, rec in enumerate(records, start=1):
+        ts = rec.get("timestamp", "")
+        try:
+            date_part = datetime.fromisoformat(ts).date().isoformat()
+        except Exception:
+            date_part = rec.get("date", "")
+
+        status = rec.get("status", "")
+        table_data.append([
+            str(i),
+            date_part,
+            rec.get("first_name", ""),
+            rec.get("last_name", ""),
+            rec.get("section_name", ""),
+            status,
+            rec.get("method", ""),
+        ])
+        # +1 because row 0 is the header
+        bg = STATUS_PRESENT_BG if status == "Present" else STATUS_ABSENT_BG
+        row_colors.append((i, bg))
+
+    tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+    # ── Base style ─────────────────────────────────────────────────────────────
+    style_cmds = [
+        # Header
+        ("BACKGROUND",  (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
+        ("TEXTCOLOR",   (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",    (0, 0), (-1, 0), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+        ("TOPPADDING",  (0, 0), (-1, 0), 8),
+        # Body
+        ("FONTNAME",    (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE",    (0, 1), (-1, -1), 9),
+        ("TOPPADDING",  (0, 1), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+        # Grid
+        ("GRID",        (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
+        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
+        # Align # column centre
+        ("ALIGN",       (0, 0), (0, -1), "CENTER"),
+    ]
+    # Per-row status colours (override ROWBACKGROUNDS)
+    for row_idx, bg in row_colors:
+        style_cmds.append(("BACKGROUND", (0, row_idx), (-1, row_idx), bg))
+
+    tbl.setStyle(TableStyle(style_cmds))
+    story.append(tbl)
+
+    doc.build(story)
+
+
+def export_today_to_pdf(filepath: str) -> tuple[bool, str]:
+    """Export today's attendance records to a PDF file.
+
+    Args:
+        filepath: Absolute path (including filename) for the output .pdf file.
+
+    Returns:
+        (True, filepath)   on success.
+        (False, error_msg) on failure.
+    """
+    try:
+        records = get_today_log()
+        _write_attendance_pdf(
+            records,
+            filepath,
+            title=f"Today's Attendance Report — {date.today().isoformat()}",
+        )
+        log_info(f"Exported today's attendance to PDF: {filepath} ({len(records)} rows)")
+        return True, filepath
+    except Exception as exc:
+        log_error(f"PDF export (today) failed: {exc}")
+        return False, str(exc)
+
+
+def export_all_to_pdf(filepath: str) -> tuple[bool, str]:
+    """Export every attendance record in the database to a PDF file.
+
+    Args:
+        filepath: Absolute path (including filename) for the output .pdf file.
+
+    Returns:
+        (True, filepath)   on success.
+        (False, error_msg) on failure.
+    """
+    try:
+        records = attendance_model.get_all_attendance_with_details()
+        _write_attendance_pdf(
+            records,
+            filepath,
+            title="Full Attendance Report",
+        )
+        log_info(f"Exported all attendance to PDF: {filepath} ({len(records)} rows)")
+        return True, filepath
+    except Exception as exc:
+        log_error(f"PDF export (all) failed: {exc}")
+        return False, str(exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+def export_to_google_sheets(
+    spreadsheet_url: str,
+    worksheet_title: str = "Attendance Export",
+) -> tuple[bool, str]:
+    """Export all attendance records to a Google Sheet.
+
+    The function appends all rows to a worksheet named *worksheet_title*
+    inside the spreadsheet identified by *spreadsheet_url*.  If the
+    worksheet does not yet exist it is created.  Existing content is
+    **replaced** (worksheet is cleared before writing).
+
+    Credentials are read from the ``google_credentials_path`` setting.
+
+    Args:
+        spreadsheet_url:  Full URL or spreadsheet-key string.
+        worksheet_title:  Name of the target worksheet tab.
+
+    Returns:
+        (True, info_msg)    on success.
+        (False, error_msg)  on failure.
+    """
+    try:
+        import gspread  # type: ignore[import]
+        from google.oauth2.service_account import Credentials  # type: ignore[import]
+    except ImportError as exc:
+        return False, f"gspread / google-auth not installed: {exc}"
+
+    import models.settings_model as settings_model
+    creds_path = settings_model.get_setting("google_credentials_path") or ""
+    if not creds_path or not Path(creds_path).is_file():
+        return (
+            False,
+            "Google credentials file not configured.\n"
+            "Set the path in Settings → Google Credentials.",
+        )
+
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_url(spreadsheet_url)
+    except gspread.exceptions.APIError as exc:
+        log_error(f"Google Sheets API error during export: {exc}")
+        return False, f"Google Sheets API error:\n{exc}"
+    except Exception as exc:
+        log_error(f"Failed to open spreadsheet: {exc}")
+        return False, f"Could not open spreadsheet:\n{exc}"
+
+    try:
+        try:
+            ws = sh.worksheet(worksheet_title)
+            ws.clear()
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title=worksheet_title, rows=1000, cols=20)
+
+        records = attendance_model.get_all_attendance_with_details()
+        header = ["Date", "First Name", "Last Name", "Section", "Status", "Method", "Timestamp"]
+        rows_out = [header]
+        for rec in records:
+            ts = rec.get("timestamp", "")
+            try:
+                date_part = datetime.fromisoformat(ts).date().isoformat()
+            except Exception:
+                date_part = rec.get("date", "")
+            rows_out.append([
+                date_part,
+                rec.get("first_name", ""),
+                rec.get("last_name", ""),
+                rec.get("section_name", ""),
+                rec.get("status", ""),
+                rec.get("method", ""),
+                ts,
+            ])
+
+        ws.update(rows_out)
+        info = (
+            f"Exported {len(records)} records to "
+            f"'{worksheet_title}' in the sheet."
+        )
+        log_info(f"Google Sheets export: {info}")
+        return True, info
+    except gspread.exceptions.APIError as exc:
+        log_error(f"Google Sheets write error: {exc}")
+        return False, f"Google Sheets write error:\n{exc}"
+    except Exception as exc:
+        log_error(f"Unexpected error during Sheets export: {exc}")
+        return False, str(exc)
+
+
+def push_summary_to_sheets(spreadsheet_url: str) -> tuple[bool, str]:
+    """
+    Push a per-student attendance summary (attended/total format) to a dedicated
+    'Attendance Summary' worksheet in the given Google Spreadsheet.
+
+    The worksheet is created if it does not already exist, and its contents are
+    **replaced** on every call.
+
+    Credentials are read from the ``google_credentials_path`` setting.
+
+    Args:
+        spreadsheet_url: Full URL of the Google Spreadsheet.
+
+    Returns:
+        (True, info_msg)    on success.
+        (False, error_msg)  on failure.
+    """
+    try:
+        import gspread  # type: ignore[import]
+        from google.oauth2.service_account import Credentials  # type: ignore[import]
+    except ImportError as exc:
+        return False, f"gspread / google-auth not installed: {exc}"
+
+    import models.settings_model as settings_model
+
+    creds_path = settings_model.get_setting("google_credentials_path") or ""
+    if not creds_path or not Path(creds_path).is_file():
+        return False, "Credentials not configured"
+
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_url(spreadsheet_url)
+    except Exception as exc:
+        log_error(f"push_summary_to_sheets: failed to open spreadsheet: {exc}")
+        return False, str(exc)
+
+    try:
+        try:
+            ws = sh.worksheet("Attendance Summary")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="Attendance Summary", rows=1000, cols=10)
+
+        ws.clear()
+
+        data = attendance_model.get_total_attendance_per_student()
+        header = ["First Name", "Last Name", "Card ID", "Total Attendance"]
+        rows_out = [header]
+        for student in data:
+            rows_out.append(
+                [
+                    student.get("first_name", ""),
+                    student.get("last_name", ""),
+                    student.get("card_id") or "",
+                    student.get("summary", "0/0"),
+                ]
+            )
+
+        ws.update(rows_out, "A1")
+        info = f"Pushed {len(data)} students to Attendance Summary"
+        log_info(f"push_summary_to_sheets: {info}")
+        return True, info
+    except Exception as exc:
+        log_error(f"push_summary_to_sheets: {exc}")
+        return False, str(exc)

@@ -21,7 +21,9 @@ from typing import Any, Optional
 
 import customtkinter as ctk
 
+import controllers.attendance_controller as attendance_ctrl
 import models.settings_model as settings_model
+from utils.localization import t, set_language
 from utils.logger import log_info, log_error
 from utils.pin_utils import hash_pin, verify_pin
 
@@ -101,6 +103,10 @@ class SettingsTab(ctk.CTkFrame):
         self._build_credentials_section(outer)
         self._build_backup_section(outer)
         self._build_import_section(outer)
+        self._build_export_section(outer)
+        self._build_sheets_summary_section(outer)
+        self._build_inactive_section(outer)
+        self._build_daily_report_section(outer)
 
     # ── 1. PIN change ─────────────────────────────────────────────────────────
 
@@ -180,15 +186,15 @@ class SettingsTab(ctk.CTkFrame):
             command=self._save_threshold,
         ).pack(padx=16, pady=(0, 14), anchor="w")
 
-    # ── 3. Language (placeholder) ─────────────────────────────────────────────
+    # ── 3. Language ───────────────────────────────────────────────────────────
 
     def _build_language_section(self, outer: ctk.CTkScrollableFrame) -> None:
-        frame = _section(outer, "Language  (Phase 3)")
+        frame = _section(outer, t("lang_section"))
 
         row = ctk.CTkFrame(frame, fg_color="transparent")
         row.pack(fill="x", padx=16, pady=(0, 4))
         ctk.CTkLabel(
-            row, text="Interface language:", width=180,
+            row, text=t("lang_label"), width=180,
             font=ctk.CTkFont(size=13), text_color="#c0c0d0",
         ).pack(side="left")
 
@@ -204,11 +210,10 @@ class SettingsTab(ctk.CTkFrame):
         )
         lang_menu.pack(side="left")
 
-        ctk.CTkLabel(
-            frame,
-            text="Language switching will be fully active in Phase 3.",
-            font=ctk.CTkFont(size=11), text_color="#4b5563",
-        ).pack(padx=16, pady=(0, 14), anchor="w")
+        self._lang_status = ctk.CTkLabel(
+            frame, text="", font=ctk.CTkFont(size=12), text_color="#4ade80",
+        )
+        self._lang_status.pack(padx=16, pady=(0, 14), anchor="w")
 
     # ── 4. Google Credentials ─────────────────────────────────────────────────
 
@@ -385,7 +390,16 @@ class SettingsTab(ctk.CTkFrame):
             log_error(f"settings_tab: failed to save language — {exc}")
             messagebox.showerror("Error", f"Could not save language setting:\n{exc}", parent=self._app)
             return
-        log_info(f"Language preference set to '{code}' (will apply in Phase 3).")
+        # Apply the language globally and live-update the attendance tab if reachable
+        set_language(code)
+        # _app is AdminPanel; _app._app is the root App (which owns _attendance_tab)
+        root_app = getattr(self._app, "_app", self._app)
+        att_tab = getattr(root_app, "_attendance_tab", None)
+        if att_tab is not None:
+            att_tab._apply_language()
+        log_info(f"Language preference set to '{code}'.")
+        self._lang_status.configure(text=t("lang_restart_note"))
+        self.after(5000, lambda: self._lang_status.configure(text=""))
 
     def _browse_credentials(self) -> None:
         path = filedialog.askopenfilename(
@@ -515,9 +529,487 @@ class SettingsTab(ctk.CTkFrame):
                 parent=self._app,
             )
 
+    def _push_sheets_summary(self) -> None:
+        """Save the URL setting, then push the attendance summary to Google Sheets."""
+        url = self._sheets_summary_url.get().strip()
+        if not url:
+            self._sheets_summary_status.configure(
+                text="Please enter a spreadsheet URL.", text_color="#ff6b6b"
+            )
+            self.after(4000, lambda: self._sheets_summary_status.configure(text=""))
+            return
+
+        # Persist the URL so it survives restarts
+        try:
+            settings_model.set_setting("sheets_summary_url", url)
+        except Exception as exc:
+            log_error(f"settings_tab: failed to save sheets_summary_url — {exc}")
+
+        self._sheets_summary_status.configure(
+            text="Pushing to Google Sheets…", text_color="#93c5fd"
+        )
+        self._app.update_idletasks()
+
+        ok, result = attendance_ctrl.push_summary_to_sheets(url)
+        if ok:
+            self._sheets_summary_status.configure(
+                text=f"✓ {result}", text_color="#4ade80"
+            )
+            messagebox.showinfo("Push Complete", result, parent=self._app)
+        else:
+            self._sheets_summary_status.configure(
+                text=f"❌ {result}", text_color="#ff6b6b"
+            )
+            messagebox.showerror("Push Failed", result, parent=self._app)
+        self.after(6000, lambda: self._sheets_summary_status.configure(text=""))
+
     # ──────────────────────────────────────────────────────────────────────────
     # Public hook
     # ──────────────────────────────────────────────────────────────────────────
+
+    # ── 7. Export Attendance ──────────────────────────────────────────────────
+
+    def _build_export_section(self, outer: ctk.CTkScrollableFrame) -> None:
+        frame = _section(outer, t("export_section"))
+
+        ctk.CTkLabel(
+            frame,
+            text="Export attendance records to CSV or Google Sheets.",
+            font=ctk.CTkFont(size=12), text_color="#6b7280",
+        ).pack(padx=16, pady=(0, 6), anchor="w")
+
+        self._export_status = ctk.CTkLabel(
+            frame, text="", font=ctk.CTkFont(size=12), text_color="#4ade80",
+            wraplength=600, justify="left",
+        )
+        self._export_status.pack(padx=16, pady=(0, 4), anchor="w")
+
+        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 14))
+
+        ctk.CTkButton(
+            btn_row, text=t("export_today_csv"), width=200, height=42,
+            fg_color="#374151", hover_color="#4b5563",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._export_today_csv,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_row, text=t("export_all_csv"), width=190, height=42,
+            fg_color="#374151", hover_color="#4b5563",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._export_all_csv,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_row, text=t("export_sheets"), width=220, height=42,
+            fg_color="#166534", hover_color="#15803d",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._export_sheets,
+        ).pack(side="left")
+
+        # PDF export row
+        pdf_row = ctk.CTkFrame(frame, fg_color="transparent")
+        pdf_row.pack(fill="x", padx=16, pady=(0, 14))
+
+        ctk.CTkButton(
+            pdf_row, text="📄  Export Today PDF", width=200, height=42,
+            fg_color="#7c2d12", hover_color="#9a3412",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._export_today_pdf,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            pdf_row, text="📄  Export All PDF", width=190, height=42,
+            fg_color="#7c2d12", hover_color="#9a3412",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._export_all_pdf,
+        ).pack(side="left")
+
+    # ── Export handlers ───────────────────────────────────────────────────────
+
+    def _export_today_csv(self) -> None:
+        from tkinter import filedialog
+        from datetime import date as _date
+        default_name = f"attendance_{_date.today().isoformat()}.csv"
+        path = filedialog.asksaveasfilename(
+            title="Export Today's Attendance to CSV",
+            initialfile=default_name,
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            parent=self._app,
+        )
+        if not path:
+            return
+        ok, result = attendance_ctrl.export_today_to_csv(path)
+        if ok:
+            self._export_status.configure(
+                text=f"✓ Today's attendance exported to:\n{result}",
+                text_color="#4ade80",
+            )
+            messagebox.showinfo("Export Complete", f"Exported to:\n{result}", parent=self._app)
+        else:
+            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
+            messagebox.showerror("Export Failed", result, parent=self._app)
+        self.after(6000, lambda: self._export_status.configure(text=""))
+
+    def _export_all_csv(self) -> None:
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            title="Export All Attendance to CSV",
+            initialfile="attendance_all.csv",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            parent=self._app,
+        )
+        if not path:
+            return
+        ok, result = attendance_ctrl.export_all_to_csv(path)
+        if ok:
+            self._export_status.configure(
+                text=f"✓ All attendance exported to:\n{result}",
+                text_color="#4ade80",
+            )
+            messagebox.showinfo("Export Complete", f"Exported to:\n{result}", parent=self._app)
+        else:
+            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
+            messagebox.showerror("Export Failed", result, parent=self._app)
+        self.after(6000, lambda: self._export_status.configure(text=""))
+
+    def _export_today_pdf(self) -> None:
+        from datetime import date as _date
+        default_name = f"attendance_{_date.today().isoformat()}.pdf"
+        path = filedialog.asksaveasfilename(
+            title="Export Today's Attendance to PDF",
+            initialfile=default_name,
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            parent=self._app,
+        )
+        if not path:
+            return
+        ok, result = attendance_ctrl.export_today_to_pdf(path)
+        if ok:
+            self._export_status.configure(
+                text=f"✓ Today's attendance exported to PDF:\n{result}",
+                text_color="#4ade80",
+            )
+            messagebox.showinfo("Export Complete", f"PDF exported to:\n{result}", parent=self._app)
+        else:
+            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
+            messagebox.showerror("Export Failed", result, parent=self._app)
+        self.after(6000, lambda: self._export_status.configure(text=""))
+
+    def _export_all_pdf(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Export All Attendance to PDF",
+            initialfile="attendance_all.pdf",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            parent=self._app,
+        )
+        if not path:
+            return
+        ok, result = attendance_ctrl.export_all_to_pdf(path)
+        if ok:
+            self._export_status.configure(
+                text=f"✓ All attendance exported to PDF:\n{result}",
+                text_color="#4ade80",
+            )
+            messagebox.showinfo("Export Complete", f"PDF exported to:\n{result}", parent=self._app)
+        else:
+            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
+            messagebox.showerror("Export Failed", result, parent=self._app)
+        self.after(6000, lambda: self._export_status.configure(text=""))
+
+    def _export_sheets(self) -> None:
+        """Ask for a Google Sheet URL and export all attendance records to it."""
+        # Prompt user for the spreadsheet URL
+        from tkinter import simpledialog
+        url = simpledialog.askstring(
+            "Export to Google Sheets",
+            "Paste the full Google Sheets URL (the sheet must be shared with\n"
+            "the service account e-mail in your credentials JSON):",
+            parent=self._app,
+        )
+        if not url or not url.strip():
+            return
+        self._export_status.configure(text="Exporting to Google Sheets…", text_color="#93c5fd")
+        self._app.update_idletasks()
+        ok, result = attendance_ctrl.export_to_google_sheets(url.strip())
+        if ok:
+            self._export_status.configure(text=f"✓ {result}", text_color="#4ade80")
+            messagebox.showinfo("Export Complete", result, parent=self._app)
+        else:
+            self._export_status.configure(text=f"❌ {result}", text_color="#ff6b6b")
+            messagebox.showerror("Export Failed", result, parent=self._app)
+        self.after(6000, lambda: self._export_status.configure(text=""))
+
+    # ── 8. Google Sheets Summary ─────────────────────────────────────────────
+
+    def _build_sheets_summary_section(self, outer: ctk.CTkScrollableFrame) -> None:
+        frame = _section(outer, "Google Sheets Summary")
+
+        ctk.CTkLabel(
+            frame,
+            text="Push a per-student attendance summary (attended/total) to a dedicated\n"
+                 "'Attendance Summary' worksheet in the given Google Spreadsheet.",
+            font=ctk.CTkFont(size=12), text_color="#6b7280",
+            justify="left",
+        ).pack(padx=16, pady=(0, 6), anchor="w")
+
+        url_row = ctk.CTkFrame(frame, fg_color="transparent")
+        url_row.pack(fill="x", padx=16, pady=(0, 4))
+
+        ctk.CTkLabel(
+            url_row, text="Spreadsheet URL", width=140,
+            font=ctk.CTkFont(size=13), text_color="#c0c0d0",
+        ).pack(side="left")
+
+        saved_url = settings_model.get_setting("sheets_summary_url") or ""
+        self._sheets_summary_url = ctk.CTkEntry(
+            url_row, width=440, height=38, font=ctk.CTkFont(size=12),
+            placeholder_text="https://docs.google.com/spreadsheets/d/…",
+        )
+        self._sheets_summary_url.pack(side="left", fill="x", expand=True)
+        if saved_url:
+            self._sheets_summary_url.insert(0, saved_url)
+
+        self._sheets_summary_status = ctk.CTkLabel(
+            frame, text="", font=ctk.CTkFont(size=12), text_color="#4ade80",
+            wraplength=600, justify="left",
+        )
+        self._sheets_summary_status.pack(padx=16, pady=(0, 4), anchor="w")
+
+        ctk.CTkButton(
+            frame, text="Push Summary to Sheets", width=220, height=42,
+            fg_color="#166534", hover_color="#15803d",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._push_sheets_summary,
+        ).pack(padx=16, pady=(0, 14), anchor="w")
+
+    # ── Public hook ───────────────────────────────────────────────────────────
+
+    # ── 9. Inactive Students ───────────────────────────────────────────
+
+    def _build_inactive_section(self, outer: ctk.CTkScrollableFrame) -> None:
+        frame = _section(outer, "Inactive Students")
+
+        ctk.CTkLabel(
+            frame,
+            text="Students are automatically flagged inactive when they have"
+                 " N consecutive absences.\n"
+                 "An inactive student still scans normally but their banner flashes"
+                 " purple as a visual alert.",
+            font=ctk.CTkFont(size=12), text_color="#6b7280",
+            justify="left", wraplength=580,
+        ).pack(padx=16, pady=(0, 6), anchor="w")
+
+        row = ctk.CTkFrame(frame, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(0, 4))
+        ctk.CTkLabel(
+            row, text="Consecutive absences to mark inactive:", width=280,
+            font=ctk.CTkFont(size=13), text_color="#c0c0d0",
+        ).pack(side="left")
+        self._inactive_thresh_entry = ctk.CTkEntry(
+            row, width=80, height=38, font=ctk.CTkFont(size=14),
+        )
+        self._inactive_thresh_entry.pack(side="left", padx=(0, 8))
+        cur_thresh = settings_model.get_setting("inactive_threshold") or "3"
+        self._inactive_thresh_entry.insert(0, cur_thresh)
+
+        self._inactive_status = ctk.CTkLabel(
+            frame, text="", font=ctk.CTkFont(size=12), text_color="#4ade80",
+            wraplength=580, justify="left",
+        )
+        self._inactive_status.pack(padx=16, pady=(0, 4), anchor="w")
+
+        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 14))
+
+        ctk.CTkButton(
+            btn_row, text="Save Threshold", width=160, height=38,
+            fg_color="#2563eb", hover_color="#1d4ed8",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._save_inactive_threshold,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_row, text="Refresh Inactive Status Now", width=220, height=38,
+            fg_color="#374151", hover_color="#4b5563",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._refresh_inactive_status,
+        ).pack(side="left")
+
+    # ── 10. Daily Report ──────────────────────────────────────────────
+
+    def _build_daily_report_section(self, outer: ctk.CTkScrollableFrame) -> None:
+        frame = _section(outer, "Daily Report")
+
+        ctk.CTkLabel(
+            frame,
+            text="Generate a summary of today\'s attendance.\n"
+                 "Inactive students are excluded from all totals.",
+            font=ctk.CTkFont(size=12), text_color="#6b7280",
+            justify="left",
+        ).pack(padx=16, pady=(0, 6), anchor="w")
+
+        ctk.CTkButton(
+            frame, text="Show Daily Report", width=200, height=42,
+            fg_color="#0f4c75", hover_color="#1b6ca8",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._show_daily_report,
+        ).pack(padx=16, pady=(0, 14), anchor="w")
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Inactive handlers
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    def _save_inactive_threshold(self) -> None:
+        val = self._inactive_thresh_entry.get().strip()
+        try:
+            iv = int(val)
+            if iv < 1:
+                raise ValueError
+        except ValueError:
+            self._inactive_status.configure(
+                text="Please enter a positive integer (minimum 1).",
+                text_color="#ff6b6b",
+            )
+            return
+        try:
+            settings_model.set_setting("inactive_threshold", str(iv))
+        except Exception as exc:
+            log_error(f"settings_tab: failed to save inactive_threshold — {exc}")
+            messagebox.showerror("Error", f"Could not save setting:\n{exc}", parent=self._app)
+            return
+        self._inactive_status.configure(
+            text=f"✓ Inactive threshold set to {iv} consecutive absences.",
+            text_color="#4ade80",
+        )
+        log_info(f"Inactive threshold set to {iv}.")
+        self.after(3000, lambda: self._inactive_status.configure(text=""))
+
+    def _refresh_inactive_status(self) -> None:
+        """Recompute inactive flags for all students and report how many changed."""
+        try:
+            became_inactive, became_active = attendance_ctrl.refresh_inactive_status_all()
+            msg = (
+                f"✓ Done — {became_inactive} student(s) newly inactive, "
+                f"{became_active} re-activated."
+            )
+            self._inactive_status.configure(text=msg, text_color="#4ade80")
+            messagebox.showinfo("Inactive Status Refreshed", msg, parent=self._app)
+        except Exception as exc:
+            log_error(f"_refresh_inactive_status: {exc}")
+            messagebox.showerror("Error", str(exc), parent=self._app)
+        self.after(5000, lambda: self._inactive_status.configure(text=""))
+
+    def _show_daily_report(self) -> None:
+        """Build and display a today\'s attendance report in a popup dialog."""
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        try:
+            report = attendance_ctrl.get_daily_report(today)
+        except Exception as exc:
+            log_error(f"_show_daily_report: {exc}")
+            messagebox.showerror("Error", f"Could not generate report:\n{exc}", parent=self._app)
+            return
+
+        dlg = ctk.CTkToplevel(self._app)
+        dlg.title(f"Daily Report — {today}")
+        dlg.geometry("560x520")
+        dlg.configure(fg_color="#1a1a2e")
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        # Title
+        ctk.CTkLabel(
+            dlg, text=f"Daily Attendance Report",
+            font=ctk.CTkFont(size=20, weight="bold"), text_color="#e0e0e0",
+        ).pack(padx=24, pady=(20, 4), anchor="w")
+        ctk.CTkLabel(
+            dlg, text=today,
+            font=ctk.CTkFont(size=13), text_color="#6b7280",
+        ).pack(padx=24, pady=(0, 16), anchor="w")
+
+        # Summary card
+        summary_frame = ctk.CTkFrame(dlg, fg_color="#0f0f23", corner_radius=10)
+        summary_frame.pack(fill="x", padx=24, pady=(0, 14))
+
+        total   = report["total_active"]
+        present = report["present_count"]
+        absent  = report["absent_count"]
+        pct     = f"{present / total * 100:.0f}%" if total > 0 else "N/A"
+
+        stats = [
+            ("Active Students", str(total),   "#93c5fd"),
+            ("Present",         str(present), "#4ade80"),
+            ("Absent",          str(absent),  "#f87171"),
+            ("Attendance Rate", pct,           "#fbbf24"),
+        ]
+        stat_row = ctk.CTkFrame(summary_frame, fg_color="transparent")
+        stat_row.pack(fill="x", padx=16, pady=14)
+        for label, value, color in stats:
+            cell = ctk.CTkFrame(stat_row, fg_color="transparent")
+            cell.pack(side="left", expand=True)
+            ctk.CTkLabel(
+                cell, text=value,
+                font=ctk.CTkFont(size=28, weight="bold"), text_color=color,
+            ).pack()
+            ctk.CTkLabel(
+                cell, text=label,
+                font=ctk.CTkFont(size=11), text_color="#6b7280",
+            ).pack()
+
+        # Per-section breakdown
+        ctk.CTkLabel(
+            dlg, text="Per-Section Breakdown",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color="#e0e0e0",
+        ).pack(padx=24, pady=(0, 8), anchor="w")
+
+        sec_scroll = ctk.CTkScrollableFrame(dlg, fg_color="#111125", corner_radius=8)
+        sec_scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+
+        sections = report["sections"]
+        if not sections:
+            ctk.CTkLabel(
+                sec_scroll,
+                text="No sections scheduled today.",
+                font=ctk.CTkFont(size=13), text_color="#6b7280",
+            ).pack(pady=20)
+        else:
+            # Header
+            hdr = ctk.CTkFrame(sec_scroll, fg_color="transparent")
+            hdr.pack(fill="x", padx=4, pady=(4, 2))
+            for text, w in [("Section", 240), ("Present", 90), ("Absent", 90), ("Total", 90), ("Rate", 80)]:
+                ctk.CTkLabel(
+                    hdr, text=text, width=w, anchor="w",
+                    font=ctk.CTkFont(size=11, weight="bold"), text_color="#6b7280",
+                ).pack(side="left", padx=4)
+            for sec in sections:
+                sec_total   = sec["total"]
+                sec_present = sec["present"]
+                sec_pct     = f"{sec_present / sec_total * 100:.0f}%" if sec_total > 0 else "N/A"
+                fr = ctk.CTkFrame(sec_scroll, fg_color="#1e1e35", corner_radius=6)
+                fr.pack(fill="x", pady=2, padx=4)
+                for text, w, color in [
+                    (sec["name"],      240, "#e0e0e0"),
+                    (str(sec_present), 90,  "#4ade80"),
+                    (str(sec["absent"]), 90, "#f87171"),
+                    (str(sec_total),   90,  "#93c5fd"),
+                    (sec_pct,          80,  "#fbbf24"),
+                ]:
+                    ctk.CTkLabel(
+                        fr, text=text, width=w, anchor="w",
+                        font=ctk.CTkFont(size=13), text_color=color,
+                    ).pack(side="left", padx=(8 if text == sec["name"] else 4), pady=6)
+
+        ctk.CTkButton(
+            dlg, text="Close", width=100, height=36,
+            fg_color="#374151", hover_color="#4b5563",
+            command=dlg.destroy,
+        ).pack(pady=(0, 16))
 
     def on_tab_selected(self) -> None:
         pass

@@ -41,7 +41,7 @@ _APP_DIR = _get_app_dir()
 DB_PATH: str = str(_APP_DIR / "attendance.db")
 
 # ── Current schema version ────────────────────────────────────────────────────
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 # ── DDL statements ─────────────────────────────────────────────────────────────
 _DDL_SCHEMA_VERSION = """
@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS students (
     first_name  TEXT NOT NULL,
     last_name   TEXT NOT NULL,
     card_id     TEXT UNIQUE,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    is_inactive INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -125,6 +126,7 @@ _DEFAULT_SETTINGS: list[tuple[str, str]] = [
     ("admin_pin", ""),           # Empty means not yet configured; PIN dialog will prompt
     ("language", "en"),
     ("google_credentials_path", ""),
+    ("inactive_threshold", "3"),  # Consecutive absences before a student is marked inactive
 ]
 
 
@@ -212,11 +214,23 @@ def initialise_database() -> None:
                 (key, value),
             )
 
-        # Record schema version
-        cursor.execute(
-            "INSERT OR IGNORE INTO schema_version (version) VALUES (?);",
-            (_SCHEMA_VERSION,),
-        )
+        # Seed the version row only on a completely fresh database (no rows yet).
+        # Always start at version 1 so _run_migrations can upgrade incrementally.
+        # Using _SCHEMA_VERSION here caused duplicate rows when an older DB
+        # already had version=1: the insert would add a second row (version=2),
+        # and the subsequent UPDATE in _run_migrations would then violate the
+        # UNIQUE constraint.
+        if cursor.execute("SELECT COUNT(*) FROM schema_version;").fetchone()[0] == 0:
+            cursor.execute("INSERT INTO schema_version (version) VALUES (1);")
+
+        # Guard: if a previous bad startup left duplicate rows, collapse them to
+        # the highest version so _run_migrations can work safely.
+        row_count = cursor.execute("SELECT COUNT(*) FROM schema_version;").fetchone()[0]
+        if row_count > 1:
+            max_ver = cursor.execute("SELECT MAX(version) FROM schema_version;").fetchone()[0]
+            cursor.execute("DELETE FROM schema_version;")
+            cursor.execute("INSERT INTO schema_version (version) VALUES (?);", (max_ver,))
+            log_info(f"Cleaned up {row_count} duplicate schema_version rows → kept v{max_ver}.")
 
         conn.commit()
         log_debug(f"Schema initialised at version {_SCHEMA_VERSION}.")
@@ -235,15 +249,21 @@ def initialise_database() -> None:
 def _run_migrations(cursor: sqlite3.Cursor, conn: sqlite3.Connection) -> None:
     """
     Apply incremental schema migrations.
-    Currently a stub — add migration blocks as schema evolves.
     """
     row = cursor.execute("SELECT version FROM schema_version;").fetchone()
     stored_version: int = row["version"] if row else 0
 
+    if stored_version < 2:
+        # v2: add is_inactive column to students table
+        try:
+            cursor.execute(
+                "ALTER TABLE students ADD COLUMN is_inactive INTEGER NOT NULL DEFAULT 0;"
+            )
+            log_info("Migration v1→v2: added students.is_inactive column.")
+        except Exception:
+            pass  # Column already exists (e.g. fresh install ran the new DDL)
+
     if stored_version < _SCHEMA_VERSION:
-        # Future migrations go here, e.g.:
-        # if stored_version < 2:
-        #     cursor.execute("ALTER TABLE students ADD COLUMN ...")
         cursor.execute(
             "UPDATE schema_version SET version = ?;", (_SCHEMA_VERSION,)
         )

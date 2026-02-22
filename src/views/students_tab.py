@@ -24,9 +24,10 @@ from utils.logger import log_info, log_warning
 
 # Column definitions: (header label, dict key, display width)
 _COLUMNS: list[tuple[str, str, int]] = [
-    ("Name",     "full_name", 260),
-    ("RFID",     "card_id",   200),
-    ("Sections", "sections",  340),
+    ("Name",         "full_name",      260),
+    ("RFID",         "card_id",        200),
+    ("Sections",     "sections",       280),
+    ("Attendance %", "attendance_pct", 110),
 ]
 
 
@@ -194,15 +195,19 @@ class StudentsTab(ctk.CTkFrame):
             self._render_row(row_data)
 
     def _render_row(self, row_data: dict) -> None:
+        is_inactive = row_data.get("is_inactive", False)
+        row_bg = "#2d0d0d" if is_inactive else "#1e1e35"  # dark red tint for inactive
         row = ctk.CTkFrame(
-            self._list_frame, fg_color="#1e1e35", corner_radius=6,
+            self._list_frame, fg_color=row_bg, corner_radius=6,
         )
         row.pack(fill="x", pady=2, padx=4)
 
-        # Name
+        # Name (+ INACTIVE badge if applicable)
+        name_text = row_data["full_name"]
+        name_color = "#ff6b6b" if is_inactive else "#e0e0e0"
         ctk.CTkLabel(
-            row, text=row_data["full_name"],
-            font=ctk.CTkFont(size=13), text_color="#e0e0e0",
+            row, text=name_text,
+            font=ctk.CTkFont(size=13), text_color=name_color,
             width=260, anchor="w",
         ).pack(side="left", padx=(12, 4), pady=8)
 
@@ -219,7 +224,16 @@ class StudentsTab(ctk.CTkFrame):
         ctk.CTkLabel(
             row, text=row_data["sections"],
             font=ctk.CTkFont(size=12), text_color="#9ca3af",
-            width=340, anchor="w",
+            width=280, anchor="w",
+        ).pack(side="left", padx=4)
+
+        # Attendance %
+        pct_text  = row_data.get("attendance_pct", "—")
+        pct_color = "#4ade80" if not is_inactive else "#f87171"
+        ctk.CTkLabel(
+            row, text=pct_text,
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=pct_color,
+            width=110, anchor="w",
         ).pack(side="left", padx=4)
 
         # Action buttons

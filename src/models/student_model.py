@@ -203,3 +203,15 @@ def get_sections_for_student(student_id: int) -> list[StudentRow]:
             (student_id,),
         ).fetchall()
     return rows
+
+
+def set_inactive_status(student_id: int, inactive: bool) -> None:
+    """Set or clear the is_inactive flag for a student (1 = inactive, 0 = active)."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE students SET is_inactive = ? WHERE id = ?;",
+            (1 if inactive else 0, student_id),
+        )
+    log_debug(
+        f"Student id={student_id} marked {'inactive' if inactive else 'active'}"
+    )

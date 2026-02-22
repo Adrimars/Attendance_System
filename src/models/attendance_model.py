@@ -196,3 +196,148 @@ def get_today_attendance_with_details(today_date: str) -> list[dict]:
             (today_date,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_all_attendance_with_details() -> list[dict]:
+    """
+    Return every attendance record in the database, enriched with student,
+    session date, and section information.
+
+    Returns:
+        List of dicts with keys:
+            id, status, method, timestamp,
+            first_name, last_name, card_id,
+            section_name, date
+        Ordered newest-first.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id,
+                   a.status,
+                   a.method,
+                   a.timestamp,
+                   st.first_name,
+                   st.last_name,
+                   st.card_id,
+                   sec.name AS section_name,
+                   ses.date
+            FROM   attendance a
+            JOIN   sessions   ses ON ses.id  = a.session_id
+            JOIN   sections   sec ON sec.id  = ses.section_id
+            JOIN   students   st  ON st.id   = a.student_id
+            ORDER  BY a.timestamp DESC;
+            """,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_total_attendance_per_student() -> list[dict]:
+    """
+    Return one record per student showing how many sessions they attended
+    versus the total number of sessions for sections they are enrolled in.
+
+    Returns:
+        List of dicts with keys:
+            first_name, last_name, card_id,
+            attended       — count of 'Present' records for that student,
+            total_sessions — count of distinct sessions in enrolled sections,
+            summary        — formatted string "<attended>/<total_sessions>"
+        Ordered by last_name, first_name.
+        Students with no card_id (NULL) are included.
+        If a student is enrolled in multiple sections, counts are summed
+        across all sections.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.id,
+                   s.first_name,
+                   s.last_name,
+                   s.card_id,
+                   COUNT(CASE WHEN a.status = 'Present' THEN 1 END) AS attended,
+                   COUNT(DISTINCT sess.id)                           AS total_sessions
+            FROM   students         s
+            LEFT JOIN student_sections ss   ON ss.student_id   = s.id
+            LEFT JOIN sessions         sess ON sess.section_id = ss.section_id
+            LEFT JOIN attendance       a    ON a.student_id    = s.id
+                                           AND a.session_id    = sess.id
+            GROUP  BY s.id
+            ORDER  BY s.last_name, s.first_name;
+            """,
+        ).fetchall()
+
+    result: list[dict] = []
+    for row in rows:
+        attended = row["attended"] or 0
+        total = row["total_sessions"] or 0
+        result.append(
+            {
+                "id":           row["id"],
+                "first_name":   row["first_name"],
+                "last_name":    row["last_name"],
+                "card_id":      row["card_id"],
+                "attended":     attended,
+                "total_sessions": total,
+                "summary":      f"{attended}/{total}",
+            }
+        )
+    return result
+
+
+def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
+    """
+    Return (attended, total_sessions) for a single student.
+
+    attended       — COUNT of 'Present' records for that student.
+    total_sessions — COUNT of distinct sessions across all enrolled sections.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(CASE WHEN a.status = 'Present' THEN 1 END) AS attended,
+                COUNT(DISTINCT sess.id)                           AS total_sessions
+            FROM   student_sections ss
+            LEFT JOIN sessions     sess ON sess.section_id = ss.section_id
+            LEFT JOIN attendance   a    ON a.student_id    = ?
+                                       AND a.session_id    = sess.id
+            WHERE  ss.student_id = ?;
+            """,
+            (student_id, student_id),
+        ).fetchone()
+    if row is None:
+        return 0, 0
+    return (row["attended"] or 0), (row["total_sessions"] or 0)
+
+
+def get_consecutive_recent_absences(student_id: int) -> int:
+    """
+    Count how many of the most-recent sessions (across all enrolled sections)
+    a student was absent from (status != 'Present' or no record at all).
+
+    Counts backwards from the newest session and stops the moment a 'Present'
+    record is found, returning the number of consecutive non-present sessions.
+
+    Returns 0 if the student has no sessions or their last session was 'Present'.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(a.status, 'Absent') AS status
+            FROM   student_sections ss
+            JOIN   sessions         sess ON sess.section_id = ss.section_id
+            LEFT JOIN attendance    a    ON a.session_id    = sess.id
+                                        AND a.student_id    = ss.student_id
+            WHERE  ss.student_id = ?
+            ORDER  BY sess.date DESC, sess.id DESC;
+            """,
+            (student_id,),
+        ).fetchall()
+
+    count = 0
+    for row in rows:
+        if row["status"] == "Present":
+            break
+        count += 1
+    return count

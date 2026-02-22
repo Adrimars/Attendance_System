@@ -15,6 +15,7 @@ from typing import Optional
 
 import models.student_model as student_model
 import models.section_model as section_model
+import models.attendance_model as attendance_model
 from models.database import transaction
 from utils.logger import log_info, log_error, log_warning
 
@@ -317,23 +318,40 @@ def update_student(
 
 def get_all_students_with_sections() -> list[dict]:
     """
-    Return all students enriched with their comma-separated section names.
+    Return all students enriched with their comma-separated section names,
+    attendance percentage, and inactive status.
 
     Returns:
-        List of dicts: {id, first_name, last_name, card_id, sections}.
+        List of dicts: {id, first_name, last_name, card_id, sections,
+                        is_inactive, attended, total_sessions, attendance_pct}.
         card_id is '' if not assigned.  sections is '—' if none.
+        attendance_pct is e.g. '80%' or '—' if no sessions.
     """
     rows = student_model.get_all_students()
+
+    # Fetch attendance summary for all students in one query
+    summary_map: dict[int, dict] = {
+        s["id"]: s for s in attendance_model.get_total_attendance_per_student()
+    }
+
     result: list[dict] = []
     for row in rows:
         secs = student_model.get_sections_for_student(row["id"])
         section_names = ", ".join(s["name"] for s in secs) if secs else "—"
+        summary = summary_map.get(row["id"], {})
+        attended = summary.get("attended", 0)
+        total = summary.get("total_sessions", 0)
+        pct = f"{attended / total * 100:.0f}%" if total > 0 else "—"
         result.append({
-            "id":         row["id"],
-            "first_name": row["first_name"],
-            "last_name":  row["last_name"],
-            "card_id":    row["card_id"] or "",
-            "sections":   section_names,
+            "id":             row["id"],
+            "first_name":     row["first_name"],
+            "last_name":      row["last_name"],
+            "card_id":        row["card_id"] or "",
+            "sections":       section_names,
+            "is_inactive":    bool(row["is_inactive"]),
+            "attended":       attended,
+            "total_sessions": total,
+            "attendance_pct": pct,
         })
     return result
 
