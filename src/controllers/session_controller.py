@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, timezone, datetime
+from datetime import date
 from typing import Optional
 
 import models.session_model as session_model
@@ -156,7 +156,7 @@ def end_session(session_id: int) -> Optional[SessionSummary]:
 
         absent_students: list[AbsentStudentInfo] = []
         for student in enrolled:
-            if student["id"] not in present_ids:
+            if student["id"] not in present_ids and not student["is_inactive"]:
                 # Auto-create absence record so the session is complete
                 try:
                     attendance_model.mark_absent(session_id, student["id"], method="Manual")

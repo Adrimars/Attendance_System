@@ -23,7 +23,7 @@ import customtkinter as ctk
 
 import controllers.attendance_controller as attendance_ctrl
 import controllers.section_controller as section_ctrl
-from controllers.attendance_controller import TapResultType, PassiveTapResult, _english_weekday
+from controllers.attendance_controller import TapResultType, PassiveTapResult, _english_weekday, _english_month
 from views.dialogs.registration_dialog import RegistrationDialog
 from views.dialogs.section_assign_dialog import SectionAssignDialog
 from utils.logger import log_info, log_error, log_warning
@@ -177,7 +177,8 @@ class AttendanceTab(ctk.CTkFrame):
 
     @staticmethod
     def _today_label() -> str:
-        return datetime.now().strftime("%A, %d %B %Y")
+        now = datetime.now()
+        return f"{_english_weekday(now)}, {now.day:02d} {_english_month(now)} {now.year}"
 
     @staticmethod
     def _today_date() -> str:

@@ -25,11 +25,18 @@ from utils.logger import log_info, log_error, log_warning
 # ── Locale-independent weekday helper ─────────────────────────────────────────
 _ENGLISH_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday',
                  'Friday', 'Saturday', 'Sunday']
+_ENGLISH_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+                   'July', 'August', 'September', 'October', 'November', 'December']
 
 
 def _english_weekday(dt: datetime) -> str:
     """Return English weekday name regardless of OS locale."""
     return _ENGLISH_DAYS[dt.weekday()]
+
+
+def _english_month(dt: datetime) -> str:
+    """Return English month name regardless of OS locale."""
+    return _ENGLISH_MONTHS[dt.month - 1]
 
 
 class TapResultType(Enum):
@@ -343,7 +350,8 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
             )
             # Student just attended — re-evaluate inactive status (may become active again)
             _refresh_inactive_status_for(student_id)
-            is_inactive = bool(student_model.get_student_by_id(student_id)["is_inactive"])
+            _refreshed = student_model.get_student_by_id(student_id)
+            is_inactive = bool(_refreshed["is_inactive"]) if _refreshed is not None else False
         else:
             log_info(
                 f"Passive tap duplicate: student_id={student_id} "
