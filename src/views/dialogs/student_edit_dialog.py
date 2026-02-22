@@ -165,6 +165,15 @@ class StudentEditDialog(ctk.CTkToplevel):
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(padx=28, pady=(0, 24))
 
+        # Delete button — left side, edit mode only
+        if self._is_edit:
+            ctk.CTkButton(
+                btn_row, text="🗑  Delete Student", width=160, height=42,
+                fg_color="#7f1d1d", hover_color="#991b1b",
+                font=ctk.CTkFont(size=13),
+                command=self._delete_student,
+            ).pack(side="left", padx=(0, 20))
+
         ctk.CTkButton(
             btn_row, text="Cancel", width=130, height=42,
             fg_color="#374151", hover_color="#4b5563",
@@ -367,3 +376,25 @@ class StudentEditDialog(ctk.CTkToplevel):
     def _cancel(self) -> None:
         self.saved = False
         self.destroy()
+
+    def _delete_student(self) -> None:
+        """Delete this student after confirmation and close the dialog."""
+        if self._student_id is None:
+            return
+        name = ""
+        if self._student_data:
+            name = f"{self._student_data['first_name']} {self._student_data['last_name']}"
+        if not messagebox.askyesno(
+            "Delete Student",
+            f"Permanently delete '{name}'?\n\n"
+            "Their attendance history will be retained for audit purposes.",
+            parent=self,
+        ):
+            return
+        ok, msg = student_ctrl.delete_student(self._student_id)
+        if ok:
+            log_info(f"StudentEditDialog: deleted student_id={self._student_id} '{name}'")
+            self.saved = True   # triggers list reload in StudentsTab
+            self.destroy()
+        else:
+            self._status.configure(text=msg, text_color="#ff6b6b")
