@@ -10,17 +10,12 @@ Shows a modal dialog that prompts for the admin PIN.
 
 from __future__ import annotations
 
-import hashlib
 import customtkinter as ctk
 from typing import Optional
 
 import models.settings_model as settings_model
 from utils.logger import log_info, log_warning
-
-
-def _hash_pin(pin: str) -> str:
-    """Return SHA-256 hex digest of the PIN."""
-    return hashlib.sha256(pin.encode()).hexdigest()
+from utils.pin_utils import hash_pin, verify_pin
 
 
 class PinDialog(ctk.CTkToplevel):
@@ -160,7 +155,7 @@ class PinDialog(ctk.CTkToplevel):
             if pin != confirm:
                 self._status_label.configure(text="PINs do not match. Try again.")
                 return
-            settings_model.set_setting("admin_pin", _hash_pin(pin))
+            settings_model.set_setting("admin_pin", hash_pin(pin))
             log_info("Admin PIN created for the first time.")
             self.granted = True
             self.destroy()
@@ -168,7 +163,7 @@ class PinDialog(ctk.CTkToplevel):
 
         # Normal login
         self._attempts += 1
-        if _hash_pin(pin) == self._stored_hash:
+        if verify_pin(pin, self._stored_hash):
             log_info("Admin PIN accepted.")
             self.granted = True
             self.destroy()

@@ -38,6 +38,7 @@ class RegistrationDialog(ctk.CTkToplevel):
 
         self.card_id: str = card_id
         self.student_id: Optional[int] = None   # set on successful save
+        self.section_ids: list[int] = []        # set on successful save
 
         self._sections = section_controller.get_all_sections()
         self._section_vars: dict[int, ctk.BooleanVar] = {}
@@ -176,6 +177,7 @@ class RegistrationDialog(ctk.CTkToplevel):
 
         if result.success:
             self.student_id = result.student_id
+            self.section_ids = selected_ids
             log_info(
                 f"RegistrationDialog: registered student_id={self.student_id} "
                 f"sections={selected_ids}"

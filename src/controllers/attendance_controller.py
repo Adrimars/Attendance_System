@@ -325,6 +325,44 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
         )
 
 
+def mark_present_for_enrolled_sections(
+    student_id: int,
+    section_ids: list[int],
+) -> list[str]:
+    """
+    Called right after new-student registration to mark the student Present
+    in every section they just enrolled in (for today's date).
+
+    A session is auto-created for each section if one does not yet exist.
+    Sections where the student is already marked are silently skipped.
+
+    Args:
+        student_id:  The newly created student id.
+        section_ids: The section ids the student was enrolled in.
+
+    Returns:
+        List of section ids (as strings) that were successfully marked Present.
+    """
+    today = date.today().isoformat()
+    marked: list[str] = []
+    for sec_id in section_ids:
+        try:
+            session_id = session_model.get_or_create_session(sec_id, today)
+            if not attendance_model.is_duplicate_tap(session_id, student_id):
+                attendance_model.mark_present(session_id, student_id, method="RFID")
+                marked.append(str(sec_id))
+                log_info(
+                    f"Post-registration mark-present: student={student_id} "
+                    f"section={sec_id} session={session_id}"
+                )
+        except sqlite3.Error as exc:
+            log_error(
+                f"DB error marking post-registration attendance: "
+                f"student={student_id} section={sec_id} — {exc}"
+            )
+    return marked
+
+
 def get_student_attendance_overview(student_id: int, date_str: str) -> list[dict]:
     """
     Return attendance status for a student across all enrolled sections on a date.
@@ -385,3 +423,22 @@ def set_student_attendance(
     except sqlite3.Error as exc:
         log_error(f"DB error in set_student_attendance: {exc}")
         return False, f"Database error: {exc}"
+
+
+# ── C1 MVC pass-through ────────────────────────────────────────────────────────
+
+def get_today_log() -> list[dict]:
+    """Return today's attendance records with student and section details.
+
+    This is the single authorised entry point for the view layer to fetch
+    today's log.  Routing the call through the controller means any future
+    caching, filtering, or logging added here is automatically applied to
+    all consumers.
+
+    Returns:
+        A list of dicts as produced by
+        ``attendance_model.get_today_attendance_with_details()``.
+    """
+    return attendance_model.get_today_attendance_with_details(
+        date.today().isoformat()
+    )

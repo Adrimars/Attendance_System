@@ -24,7 +24,7 @@ if _ROOT_DIR not in sys.path:
 import customtkinter as ctk
 
 from utils.logger import log_info, log_error, log_startup, log_shutdown
-from models.database import initialise_database
+from models.database import initialise_database, close_connection
 from views.app import App
 
 
@@ -84,7 +84,10 @@ def main() -> None:
     ctk.set_default_color_theme("blue")
 
     app = App()
-    app.mainloop()
+    try:
+        app.mainloop()
+    finally:
+        close_connection()
 
     log_shutdown()
     log_info("Application shut down cleanly.")

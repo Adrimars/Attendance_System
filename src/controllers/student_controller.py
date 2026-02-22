@@ -15,6 +15,7 @@ from typing import Optional
 
 import models.student_model as student_model
 import models.section_model as section_model
+from models.database import transaction
 from utils.logger import log_info, log_error, log_warning
 
 
@@ -190,13 +191,12 @@ def register_student_with_sections(
 
 
 def reassign_card(student_id: int, new_card_id: str) -> CardReassignResult:
-    """
-    Reassign a new RFID card to a student.
+    """Atomically reassign an RFID card to a student.
 
-    Steps:
-    1. Validate new_card_id is not already assigned to anyone.
-    2. NULL-out old card_id for this student.
-    3. Assign new_card_id.
+    Delegates to ``student_model.assign_card_to_student()`` which handles
+    clearing the card from any previous holder in a single DB round-trip,
+    eliminating the TOCTOU race that existed with the old check-then-act
+    pattern.
 
     Args:
         student_id:  Target student.
@@ -208,20 +208,9 @@ def reassign_card(student_id: int, new_card_id: str) -> CardReassignResult:
         return CardReassignResult(success=False, message="Card ID cannot be empty.")
 
     try:
-        # Check if the new card is already in use
-        holder = student_model.get_student_by_card_id(new_card_id)
-        if holder is not None and holder["id"] != student_id:
-            return CardReassignResult(
-                success=False,
-                message=(
-                    f"Card '{new_card_id}' is already assigned to "
-                    f"{holder['first_name']} {holder['last_name']}."
-                ),
-            )
-
-        # Unlink old card first (maintains UNIQUE constraint safety)
-        student_model.remove_card(student_id)
-        student_model.assign_card(student_id, new_card_id)
+        ok, err = student_model.assign_card_to_student(student_id, new_card_id)
+        if not ok:
+            return CardReassignResult(success=False, message=err)
 
         log_info(f"Card reassigned: student_id={student_id} new_card='{new_card_id}'")
         return CardReassignResult(
@@ -405,10 +394,12 @@ def update_student_sections(
     student_id: int,
     section_ids: list[int],
 ) -> tuple[bool, str]:
-    """
-    Replace a student's section memberships with the given list.
+    """Atomically replace a student's section enrolments.
 
-    Removes all existing enrolments, then inserts the new ones.
+    Deletes all existing enrolments and inserts the new list within a single
+    transaction (W2 fix).  If the app crashes between the DELETE and the final
+    INSERT the entire operation is rolled back, so the student is never left
+    with zero sections due to a partial write.
 
     Args:
         student_id:  Target student id.
@@ -418,11 +409,19 @@ def update_student_sections(
         (True, "") on success, (False, error_message) on failure.
     """
     try:
-        existing = student_model.get_sections_for_student(student_id)
-        for sec in existing:
-            student_model.remove_section(student_id, sec["id"])
-        for sid in section_ids:
-            student_model.assign_section(student_id, sid)
+        with transaction() as conn:
+            conn.execute(
+                "DELETE FROM student_sections WHERE student_id = ?;",
+                (student_id,),
+            )
+            for sec_id in section_ids:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO student_sections (student_id, section_id)
+                    VALUES (?, ?);
+                    """,
+                    (student_id, sec_id),
+                )
         log_info(
             f"Section memberships updated for student_id={student_id}: {section_ids}"
         )

@@ -10,16 +10,35 @@ Responsibilities:
 
 import sqlite3
 import os
+import sys
+import threading
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
 
 from utils.logger import log_info, log_error, log_debug
 
+# ── Thread-local connection cache ─────────────────────────────────────────────
+_local = threading.local()
+
 # ── Database file path ────────────────────────────────────────────────────────
-_SRC_DIR = Path(__file__).resolve().parent      # src/models/
-_ROOT_DIR = _SRC_DIR.parents[1]                 # project root
-DB_PATH: str = str(_ROOT_DIR / "attendance.db")
+def _get_app_dir() -> Path:
+    """
+    Return the folder that should contain persistent data files.
+
+    - Frozen (.exe via PyInstaller): directory that contains the .exe file,
+      so attendance.db and backups/ survive restarts and updates.
+    - Development (plain .py):       project root (two levels above this file).
+    """
+    if getattr(sys, "frozen", False):
+        # sys.executable is the .exe; its parent is the deploy folder.
+        return Path(sys.executable).resolve().parent
+    # src/models/database.py  →  parent.parent.parent = project root
+    return Path(__file__).resolve().parents[2]
+
+
+_APP_DIR = _get_app_dir()
+DB_PATH: str = str(_APP_DIR / "attendance.db")
 
 # ── Current schema version ────────────────────────────────────────────────────
 _SCHEMA_VERSION = 1
@@ -111,8 +130,8 @@ _DEFAULT_SETTINGS: list[tuple[str, str]] = [
 
 def _get_raw_connection() -> sqlite3.Connection:
     """
-    Open a new SQLite connection with the required PRAGMAs applied.
-    WAL mode is enabled on every open as required by the spec.
+    Open a fresh SQLite connection with the required PRAGMAs applied.
+    Used internally by initialise_database() and _get_cached_connection().
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -121,18 +140,42 @@ def _get_raw_connection() -> sqlite3.Connection:
     return conn
 
 
+def _get_cached_connection() -> sqlite3.Connection:
+    """Return the thread-local cached connection, creating it on first call.
+
+    The connection is reused for the lifetime of the thread, eliminating the
+    open/close overhead on every model call.  CustomTkinter runs on a single
+    main thread so this effectively gives one long-lived connection.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = _get_raw_connection()
+        _local.conn = conn
+    return conn
+
+
+def close_connection() -> None:
+    """Close the thread-local connection.  Call once at application shutdown."""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        conn.close()
+        _local.conn = None
+        log_info("Thread-local DB connection closed.")
+
+
 @contextmanager
 def get_connection() -> Generator[sqlite3.Connection, None, None]:
-    """
-    Context manager that yields an open SQLite connection and commits/rolls back
-    automatically.
+    """Context manager that yields the thread-local SQLite connection.
+
+    Commits on clean exit, rolls back on ``sqlite3.Error``.
+    The connection is *not* closed on exit — it is kept alive for the thread.
 
     Usage::
 
         with get_connection() as conn:
             conn.execute("INSERT INTO ...")
     """
-    conn = _get_raw_connection()
+    conn = _get_cached_connection()
     try:
         yield conn
         conn.commit()
@@ -140,8 +183,11 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
         conn.rollback()
         log_error(f"DB error — rolling back transaction: {exc}")
         raise
-    finally:
-        conn.close()
+    # Note: no conn.close() — connection persists for thread lifetime
+
+
+# Alias used by controllers that want explicit transaction semantics.
+transaction = get_connection
 
 
 def initialise_database() -> None:

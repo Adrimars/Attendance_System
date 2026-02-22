@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 import models.student_model as student_model
 import models.settings_model as settings_model
+from models.database import transaction
 from utils.logger import log_info, log_error, log_warning
 
 
@@ -238,11 +240,11 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
     """
     Insert accepted rows from a previously built ImportPreview into the DB.
 
-    For each row where include=True:
-    • Skip if a student with the same (first_name, last_name) already exists.
-    • Insert the student (with card_id if present).
-
-    All inserts are wrapped in a single transaction.
+    Optimisations vs. the original:
+    - C2: Pre-fetch the student list **once** before the loop — O(N+M) instead
+      of O(N×M) for N import rows and M existing students.
+    - C3: All inserts share a **single transaction** so a crash or error rolls
+      back the entire import atomically — no partial-import state.
 
     Args:
         preview: An ImportPreview returned by preview_import().
@@ -252,30 +254,40 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
         error_message is "" on success.
     """
     to_import = [r for r in preview.students if r.include]
+    if not to_import:
+        return 0, 0, ""
+
+    # ── Pre-fetch existing data ONCE (C2) ──────────────────────────────────────
+    existing_all = student_model.get_all_students()
+    known_names: set[tuple[str, str]] = {
+        (s["first_name"].lower(), s["last_name"].lower())
+        for s in existing_all
+    }
+    known_cards: set[str] = {
+        s["card_id"] for s in existing_all if s["card_id"]
+    }
+
     imported = 0
     skipped  = 0
 
+    # ── Atomic transaction for all writes (C3) ──────────────────────────────
+    # Raw SQL is used here because all writes must share one connection for
+    # true atomicity — calling student_model.create_student() would open its
+    # own connection, breaking the transaction boundary.
     try:
-        for row in to_import:
-            # Check for existing student with same name
-            existing_all = student_model.get_all_students()
-            already_exists = any(
-                s["first_name"].lower() == row.first_name.lower()
-                and s["last_name"].lower() == row.last_name.lower()
-                for s in existing_all
-            )
-            if already_exists:
-                log_warning(
-                    f"Import skip (name exists): "
-                    f"'{row.first_name} {row.last_name}'"
-                )
-                skipped += 1
-                continue
+        with transaction() as conn:
+            for row in to_import:
+                name_key = (row.first_name.lower(), row.last_name.lower())
 
-            # Check card uniqueness
-            if row.card_id:
-                holder = student_model.get_student_by_card_id(row.card_id)
-                if holder is not None:
+                if name_key in known_names:
+                    log_warning(
+                        f"Import skip (name exists): "
+                        f"'{row.first_name} {row.last_name}'"
+                    )
+                    skipped += 1
+                    continue
+
+                if row.card_id and row.card_id in known_cards:
                     log_warning(
                         f"Import skip (card taken): "
                         f"'{row.first_name} {row.last_name}' card='{row.card_id}'"
@@ -283,19 +295,29 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
                     skipped += 1
                     continue
 
-            student_model.create_student(
-                row.first_name, row.last_name, card_id=row.card_id
-            )
-            imported += 1
+                created_at = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    """
+                    INSERT INTO students (first_name, last_name, card_id, created_at)
+                    VALUES (?, ?, ?, ?);
+                    """,
+                    (row.first_name, row.last_name, row.card_id, created_at),
+                )
 
-        log_info(
-            f"Import committed: imported={imported} skipped={skipped}"
-        )
-        return imported, skipped, ""
+                # Update in-memory sets so later rows in the same batch see
+                # the newly inserted student (avoids inserting duplicates
+                # within a single import run).
+                known_names.add(name_key)
+                if row.card_id:
+                    known_cards.add(row.card_id)
+                imported += 1
 
     except sqlite3.Error as exc:
         log_error(f"import_controller: DB error during commit — {exc}")
-        return imported, skipped, f"Database error during import:\n{exc}"
+        return 0, 0, f"Database error during import (rolled back):\n{exc}"
     except Exception as exc:  # noqa: BLE001
         log_error(f"import_controller: unexpected error during commit — {exc}")
-        return imported, skipped, f"Unexpected error:\n{exc}"
+        return 0, 0, f"Unexpected error (rolled back):\n{exc}"
+
+    log_info(f"Import committed: imported={imported} skipped={skipped}")
+    return imported, skipped, ""

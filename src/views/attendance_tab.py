@@ -25,8 +25,7 @@ import controllers.attendance_controller as attendance_ctrl
 import controllers.section_controller as section_ctrl
 from controllers.attendance_controller import TapResultType
 from views.dialogs.registration_dialog import RegistrationDialog
-from models.attendance_model import get_today_attendance_with_details
-from utils.logger import log_info, log_error
+from utils.logger import log_info, log_error, log_warning
 
 # -- Colour palette -------------------------------------------------------
 _FLASH_GREEN  = "#166534"
@@ -195,7 +194,7 @@ class AttendanceTab(ctk.CTkFrame):
         for w in self._log_frame.winfo_children():
             w.destroy()
 
-        records = get_today_attendance_with_details(self._today_date())
+        records = attendance_ctrl.get_today_log()
         if not records:
             ctk.CTkLabel(
                 self._log_frame,
@@ -361,8 +360,8 @@ class AttendanceTab(ctk.CTkFrame):
                 self.after(500, self._try_refocus)  # wait and retry
                 return
             self._rfid_entry.focus_set()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_warning(f"_try_refocus failed: {exc}")
 
     def _set_listening(self, active: bool) -> None:
         if active:
@@ -415,9 +414,16 @@ class AttendanceTab(ctk.CTkFrame):
         self._app.wait_window(dlg)
 
         if dlg.student_id is not None:
-            result = attendance_ctrl.process_rfid_passive(card_id)
-            if result.result_type == TapResultType.KNOWN_PRESENT:
-                self._flash(_FLASH_GREEN, f"Registered & present: {result.message}")
+            # Mark the student present in every section they enrolled in right now
+            # (all enrolled sections for today, not filtered by day-of-week).
+            marked = attendance_ctrl.mark_present_for_enrolled_sections(
+                dlg.student_id, dlg.section_ids
+            )
+            if marked:
+                self._flash(
+                    _FLASH_GREEN,
+                    f"Registered & marked present in {len(marked)} section(s).",
+                )
             else:
                 self._flash(_FLASH_GREEN, "Student registered.")
             self._refresh_log()

@@ -13,7 +13,11 @@ import sys
 import customtkinter as ctk
 
 from views.attendance_tab import AttendanceTab
-from utils.logger import log_info, log_error
+from utils.logger import log_info, log_error, log_warning
+from utils.backup import create_backup
+from models.database import close_connection
+
+_BACKUP_INTERVAL_MS = 4 * 60 * 60 * 1000  # 4 hours
 
 
 class App(ctk.CTk):
@@ -34,6 +38,9 @@ class App(ctk.CTk):
 
         # Force focus on Windows
         self.after(100, self._force_focus)
+
+        # Periodic auto-backup every 4 hours (first backup runs on startup)
+        self.after(0, self._schedule_auto_backup)
 
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
@@ -105,13 +112,24 @@ class App(ctk.CTk):
         try:
             self.lift()
             self.focus_force()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_warning(f"_force_focus failed: {exc}")
 
     def _quit(self) -> None:
         log_info("Application quit requested.")
         try:
+            close_connection()
+        except Exception as exc:
+            log_warning(f"DB close on quit failed: {exc}")
+        try:
             self.destroy()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_warning(f"Window destroy on quit failed: {exc}")
         sys.exit(0)
+
+    def _schedule_auto_backup(self) -> None:
+        """Create a backup now then reschedule every 4 hours."""
+        # DB_PATH import deferred to avoid circular import at module level
+        from models.database import DB_PATH
+        create_backup(DB_PATH)
+        self.after(_BACKUP_INTERVAL_MS, self._schedule_auto_backup)

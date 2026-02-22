@@ -96,16 +96,21 @@ def update_student(
 
 
 def delete_student(student_id: int) -> None:
-    """
-    Delete a student and their section assignments.
-    Attendance records are retained for audit purposes.
+    """Delete a student and all their related records.
+
+    Deletes in FK-safe order: attendance → student_sections → students.
+    All three deletes share one transaction so a crash can’t leave orphans.
     """
     with get_connection() as conn:
+        # Attendance records must go first (FK: attendance.student_id → students.id)
+        conn.execute(
+            "DELETE FROM attendance WHERE student_id = ?;", (student_id,)
+        )
         conn.execute(
             "DELETE FROM student_sections WHERE student_id = ?;", (student_id,)
         )
         conn.execute("DELETE FROM students WHERE id = ?;", (student_id,))
-    log_debug(f"Deleted student id={student_id}")
+    log_debug(f"Deleted student id={student_id} (including attendance records)")
 
 
 def assign_card(student_id: int, card_id: str) -> None:
@@ -121,6 +126,34 @@ def assign_card(student_id: int, card_id: str) -> None:
             (card_id, student_id),
         )
     log_debug(f"Assigned card '{card_id}' to student id={student_id}")
+
+
+def assign_card_to_student(student_id: int, card_id: str) -> tuple[bool, str]:
+    """Atomically assign *card_id* to *student_id*.
+
+    Clears the card from any other student in the same transaction before
+    assigning it, eliminating the TOCTOU race that exists when doing
+    ``get_student_by_card_id`` + ``assign_card`` across two connections.
+
+    Returns:
+        ``(True, "")`` on success.
+        ``(False, reason)`` if a database constraint prevents the assignment.
+    """
+    try:
+        with get_connection() as conn:
+            # Drop the card from any existing holder first
+            conn.execute(
+                "UPDATE students SET card_id = NULL WHERE card_id = ? AND id != ?;",
+                (card_id, student_id),
+            )
+            conn.execute(
+                "UPDATE students SET card_id = ? WHERE id = ?;",
+                (card_id, student_id),
+            )
+        log_debug(f"Atomic card assign: card='{card_id}' → student id={student_id}")
+        return True, ""
+    except sqlite3.IntegrityError:
+        return False, "Card is already assigned to another student."
 
 
 def remove_card(student_id: int) -> None:

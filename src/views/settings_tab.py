@@ -12,7 +12,6 @@ Sections:
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 from datetime import datetime
@@ -24,12 +23,11 @@ import customtkinter as ctk
 
 import models.settings_model as settings_model
 from utils.logger import log_info, log_error
+from utils.pin_utils import hash_pin, verify_pin
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _hash_pin(pin: str) -> str:
-    return hashlib.sha256(pin.encode()).hexdigest()
 
 
 def _perform_backup() -> tuple[bool, str]:
@@ -242,6 +240,13 @@ class SettingsTab(ctk.CTkFrame):
             command=self._browse_credentials,
         ).pack(side="left")
 
+        ctk.CTkButton(
+            row, text="🗑  Delete Path", width=130, height=38,
+            fg_color="#7f1d1d", hover_color="#991b1b",
+            font=ctk.CTkFont(size=12),
+            command=self._delete_credentials_path,
+        ).pack(side="left", padx=(8, 0))
+
         self._creds_status = ctk.CTkLabel(
             frame, text="", font=ctk.CTkFont(size=12), text_color="#ff6b6b",
         )
@@ -269,12 +274,22 @@ class SettingsTab(ctk.CTkFrame):
         )
         self._backup_status.pack(padx=16, pady=(0, 4))
 
+        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 14))
+
         ctk.CTkButton(
-            frame, text="⬇  Backup Now", width=170, height=42,
+            btn_row, text="⬇  Backup Now", width=170, height=42,
             fg_color="#374151", hover_color="#4b5563",
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._backup_now,
-        ).pack(padx=16, pady=(0, 14), anchor="w")
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_row, text="⬆  Restore Backup…", width=190, height=42,
+            fg_color="#7c3aed", hover_color="#6d28d9",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._restore_backup,
+        ).pack(side="left")
 
     # ── 6. Legacy import ──────────────────────────────────────────────────────
 
@@ -307,7 +322,7 @@ class SettingsTab(ctk.CTkFrame):
 
         stored_hash = settings_model.get_setting("admin_pin") or ""
 
-        if stored_hash and _hash_pin(current) != stored_hash:
+        if stored_hash and not verify_pin(current, stored_hash):
             self._pin_status.configure(
                 text="Current PIN is incorrect.", text_color="#ff6b6b"
             )
@@ -324,7 +339,7 @@ class SettingsTab(ctk.CTkFrame):
             return
 
         try:
-            settings_model.set_setting("admin_pin", _hash_pin(new_pin))
+            settings_model.set_setting("admin_pin", hash_pin(new_pin))
         except Exception as exc:
             log_error(f"settings_tab: failed to save PIN — {exc}")
             messagebox.showerror("Error", f"Could not save PIN:\n{exc}", parent=self._app)
@@ -403,6 +418,71 @@ class SettingsTab(ctk.CTkFrame):
         )
         log_info(f"Google credentials path updated: {path}")
         self.after(3000, lambda: self._creds_status.configure(text=""))
+
+    def _delete_credentials_path(self) -> None:
+        """Clear the saved Google credentials path from the entry and the database."""
+        if not messagebox.askyesno(
+            "Delete Credentials Path",
+            "Remove the saved Google credentials path?\n"
+            "You will need to select a new JSON file before using Google Sheets features.",
+            parent=self._app,
+        ):
+            return
+        try:
+            settings_model.set_setting("google_credentials_path", "")
+        except Exception as exc:
+            log_error(f"settings_tab: failed to delete credentials path — {exc}")
+            messagebox.showerror("Error", f"Could not remove credentials path:\n{exc}", parent=self._app)
+            return
+        self._creds_var.set("")
+        self._creds_status.configure(
+            text="✓ Credentials path removed.", text_color="#4ade80"
+        )
+        log_info("Google credentials path cleared by user.")
+        self.after(3000, lambda: self._creds_status.configure(text=""))
+
+    def _restore_backup(self) -> None:
+        """Pick a backup file, safety-backup the live DB, overwrite it, then close."""
+        from models.database import DB_PATH
+        backup_dir = Path(DB_PATH).parent / "backups"
+        backup_dir.mkdir(exist_ok=True)
+
+        chosen = filedialog.askopenfilename(
+            title="Select a backup to restore",
+            initialdir=str(backup_dir),
+            filetypes=[("SQLite database", "*.db"), ("All files", "*.*")],
+            parent=self._app,
+        )
+        if not chosen:
+            return
+
+        if not messagebox.askyesno(
+            "Confirm Restore",
+            f"Restore from:\n{chosen}\n\n"
+            "A safety backup of the current database will be created first.\n"
+            "The application will close after restoring — reopen it to continue.\n\n"
+            "Proceed?",
+            parent=self._app,
+        ):
+            return
+
+        # Create a safety backup of the current live database first
+        _perform_backup()
+
+        try:
+            shutil.copy2(chosen, DB_PATH)
+            log_info(f"Database restored from backup: {chosen}")
+        except OSError as exc:
+            log_error(f"Restore failed: {exc}")
+            messagebox.showerror("Restore Failed", str(exc), parent=self._app)
+            return
+
+        messagebox.showinfo(
+            "Restore Complete",
+            "Database restored successfully.\nThe application will now close.",
+            parent=self._app,
+        )
+        self._app.destroy()
 
     def _backup_now(self) -> None:
         ok, result = _perform_backup()

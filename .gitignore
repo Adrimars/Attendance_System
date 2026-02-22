@@ -3,6 +3,10 @@ venv/
 .venv/
 env/
 
+# PyInstaller build artifacts (can be reproduced with: pyinstaller attendance.spec)
+build/
+dist/
+
 # Database
 *.db
 *.db-shm
