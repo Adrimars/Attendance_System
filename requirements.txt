@@ -1,3 +1,6 @@
+# Runtime dependencies for RFID Attendance System
+# Install with: pip install -r requirements.txt
+
 customtkinter>=5.2.0
 gspread>=6.0.0
 google-auth>=2.0.0

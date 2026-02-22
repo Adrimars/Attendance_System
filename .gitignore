@@ -1,38 +1,79 @@
-# Virtual environment
+# ─── Virtual environments ─────────────────────────────────────────────────────
 venv/
 .venv/
 env/
+ENV/
 
-# PyInstaller build artifacts (can be reproduced with: pyinstaller attendance.spec)
+# ─── PyInstaller build artifacts ──────────────────────────────────────────────
+# Auto-generated specs and output folders should not be committed.
+# Exception: attendance.spec is the hand-crafted project build config.
 build/
 dist/
+*.spec
+!attendance.spec
 
-# Database
+# ─── Database files ───────────────────────────────────────────────────────────
+# SQLite databases contain live user data and personal settings (e.g. the
+# Google Sheets URL). Never commit them.
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 
-# Python cache
+# ─── Secrets & credentials ────────────────────────────────────────────────────
+# NEVER commit API keys, service-account files, or .env files.
+.env
+.env.*
+*.env
+secrets.py
+secrets.json
+*credentials*.json
+*service_account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ─── Python cache ─────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pyx.in
+.Python
 
-# Logs
+# ─── Logs ─────────────────────────────────────────────────────────────────────
 logs/
 *.log
 
-# Backups
+# ─── Backups ──────────────────────────────────────────────────────────────────
 backups/
 
-# Google credentials
-*credentials*.json
-*service_account*.json
-
-# IDE
+# ─── IDE / editor configs ─────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# OS
+# ─── OS artefacts ─────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ─── Testing & coverage ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# ─── Distribution / packaging ─────────────────────────────────────────────────
+*.egg-info/
+.eggs/
+MANIFEST
+
+# ─── Executable release staging folder ───────────────────────────────────────
+# This folder is a scaffold for the separate Attendance_System_App repository.
+# It is not part of the source code repo.
+_app_release/
