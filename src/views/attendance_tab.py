@@ -23,8 +23,9 @@ import customtkinter as ctk
 
 import controllers.attendance_controller as attendance_ctrl
 import controllers.section_controller as section_ctrl
-from controllers.attendance_controller import TapResultType
+from controllers.attendance_controller import TapResultType, PassiveTapResult
 from views.dialogs.registration_dialog import RegistrationDialog
+from views.dialogs.section_assign_dialog import SectionAssignDialog
 from utils.logger import log_info, log_error, log_warning
 
 # -- Colour palette -------------------------------------------------------
@@ -400,10 +401,53 @@ class AttendanceTab(ctk.CTkFrame):
             self._flash(_FLASH_RED, "Unknown card -- please complete registration.")
             self._open_registration(card_id)
 
+        elif result.result_type == TapResultType.NO_SECTIONS:
+            self._flash(_FLASH_YELLOW, result.message)
+            self._open_section_assign(result)
+
         elif result.result_type == TapResultType.ERROR:
             self._flash(_BASE_BG, "")
             from tkinter import messagebox
             messagebox.showerror("Tap Error", result.message, parent=self._app)
+
+    # -------------------------------------------------------------------------
+    # Section assignment (known student, no sections enrolled)
+    # -------------------------------------------------------------------------
+
+    def _open_section_assign(self, tap_result: PassiveTapResult) -> None:
+        """Open the section assignment dialog for a student with zero enrolments."""
+        # Guard: these are always set for NO_SECTIONS results
+        if tap_result.student_id is None or not tap_result.first_name or not tap_result.last_name:
+            return
+        dlg = SectionAssignDialog(
+            self._app,
+            student_id=tap_result.student_id,
+            first_name=tap_result.first_name,
+            last_name=tap_result.last_name,
+        )
+        self._app.wait_window(dlg)
+
+        if dlg.confirmed and dlg.section_ids:
+            marked = attendance_ctrl.mark_present_for_enrolled_sections(
+                tap_result.student_id, dlg.section_ids
+            )
+            if marked:
+                self._flash(
+                    _FLASH_GREEN,
+                    f"{tap_result.first_name} {tap_result.last_name} — "
+                    f"sections assigned & marked present in {len(marked)} section(s).",
+                )
+            else:
+                self._flash(_FLASH_GREEN, "Sections assigned.")
+            self._refresh_log()
+            self._refresh_today_sections()
+        else:
+            self._flash(_BASE_BG, "Section assignment skipped.")
+
+        if getattr(self, "_sim_visible", False):
+            self._sim_entry.focus_set()
+        else:
+            self._rfid_entry.focus_set()
 
     # -------------------------------------------------------------------------
     # Registration

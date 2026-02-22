@@ -27,6 +27,7 @@ class TapResultType(Enum):
     UNKNOWN_CARD    = auto()   # Card not in DB → registration required (Red flash)
     DUPLICATE_TAP   = auto()   # Student already marked in this session (Yellow flash)
     NO_SESSION      = auto()   # No active session — tap ignored
+    NO_SECTIONS     = auto()   # Known student but zero sections enrolled → assign dialog
     ERROR           = auto()   # Unexpected error (show dialog)
 
 
@@ -253,6 +254,25 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
         student_id: int  = student["id"]
         first_name: str  = student["first_name"]
         last_name: str   = student["last_name"]
+
+        # ── Check if student has ANY sections enrolled at all ────────────────────
+        all_enrolled = student_model.get_sections_for_student(student_id)
+        if not all_enrolled:
+            log_info(
+                f"Passive tap — no sections: student_id={student_id} "
+                f"({first_name} {last_name})"
+            )
+            return PassiveTapResult(
+                result_type=TapResultType.NO_SECTIONS,
+                card_id=card_id,
+                student_id=student_id,
+                first_name=first_name,
+                last_name=last_name,
+                message=(
+                    f"{first_name} {last_name} has no sections assigned. "
+                    "Please select their sections."
+                ),
+            )
 
         today_date: str = date.today().isoformat()           # 'YYYY-MM-DD'
         today_day: str  = datetime.now().strftime("%A")      # 'Monday' … 'Sunday'
