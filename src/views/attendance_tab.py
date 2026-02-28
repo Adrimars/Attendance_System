@@ -308,8 +308,11 @@ class AttendanceTab(ctk.CTkFrame):
         ts = rec.get("timestamp", "")
         try:
             from datetime import timezone
-            dt = datetime.fromisoformat(ts).astimezone(timezone.utc).astimezone()
-            ts_str = dt.strftime("%H:%M:%S")
+            dt = datetime.fromisoformat(ts)
+            # If naive (no tzinfo), assume UTC; if aware, convert to local
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            ts_str = dt.astimezone().strftime("%H:%M:%S")
         except Exception:
             ts_str = ts[:19] if ts else "---"
 

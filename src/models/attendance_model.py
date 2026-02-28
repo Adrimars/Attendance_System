@@ -3,7 +3,7 @@ attendance_model.py — Data-access layer for the attendance table.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from models.database import get_connection
@@ -31,7 +31,7 @@ def mark_present(
     Raises:
         sqlite3.IntegrityError: If a record for (session_id, student_id) already exists.
     """
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         cursor = conn.execute(
             """
@@ -58,7 +58,7 @@ def mark_absent(
     Returns:
         The id of the new attendance record.
     """
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         cursor = conn.execute(
             """
@@ -85,7 +85,7 @@ def toggle_status(session_id: int, student_id: int) -> str:
     Raises:
         ValueError: If no attendance record exists for (session_id, student_id).
     """
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     with get_connection() as conn:
         row = conn.execute(
             """

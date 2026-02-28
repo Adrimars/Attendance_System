@@ -90,10 +90,9 @@ def main() -> None:
     try:
         app.mainloop()
     finally:
+        log_shutdown()
+        log_info("Application shut down cleanly.")
         close_connection()
-
-    log_shutdown()
-    log_info("Application shut down cleanly.")
 
 
 if __name__ == "__main__":

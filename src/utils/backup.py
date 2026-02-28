@@ -15,14 +15,12 @@ Automatic periodic backups are scheduled by ``views/app.py`` via
 
 from __future__ import annotations
 
-import shutil
 from datetime import datetime
 from pathlib import Path
 
 from utils.logger import log_info, log_warning
 
 MAX_BACKUPS = 10
-_BACKUP_DIR = Path("backups")
 
 
 def create_backup(db_path: str | Path) -> tuple[bool, str]:
@@ -49,10 +47,23 @@ def create_backup(db_path: str | Path) -> tuple[bool, str]:
     backup_path = backup_dir / backup_name
 
     try:
-        shutil.copy2(db_path, backup_path)
+        # Use SQLite's backup API instead of shutil.copy2 so that WAL
+        # contents are checkpointed into the backup file automatically.
+        import sqlite3 as _sqlite3
+        src_conn = _sqlite3.connect(str(db_path))
+        dst_conn = _sqlite3.connect(str(backup_path))
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        src_conn.close()
         log_info(f"Auto-backup created: {backup_path}")
-    except OSError as exc:
+    except (OSError, Exception) as exc:
         log_warning(f"Backup failed: {exc}")
+        # Clean up partial backup file on failure
+        try:
+            backup_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return False, str(exc)
 
     _prune_old_backups(backup_dir)

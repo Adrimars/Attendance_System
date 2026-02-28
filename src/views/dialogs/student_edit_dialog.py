@@ -52,11 +52,7 @@ class StudentEditDialog(ctk.CTkToplevel):
         self._enrolled_ids: set[int] = set()
 
         if self._is_edit and student_id is not None:
-            students = student_ctrl.get_all_students_with_sections()
-            for s in students:
-                if s["id"] == student_id:
-                    self._student_data = s
-                    break
+            self._student_data = student_ctrl.get_student_with_sections_by_id(student_id)
             # Load actual enrolled section ids via controller (MVC-compliant)
             self._enrolled_ids = student_ctrl.get_enrolled_section_ids(student_id)
 
@@ -260,14 +256,16 @@ class StudentEditDialog(ctk.CTkToplevel):
         self._rfid_change_btn.pack_forget()
         self._rfid_entry.pack(side="left", padx=(0, 4))
         self._rfid_confirm_btn.pack(side="left", padx=(0, 4))
-        cancel_btn = ctk.CTkButton(
-            self._rfid_entry.master, text="✕", width=32, height=34,
-            fg_color="#374151", hover_color="#4b5563",
-            font=ctk.CTkFont(size=12),
-            command=self._cancel_rfid_capture,
-        )
-        cancel_btn.pack(side="left")
-        self._rfid_cancel_btn = cancel_btn
+        # Only create the cancel button once
+        if not hasattr(self, "_rfid_cancel_btn") or self._rfid_cancel_btn is None:
+            cancel_btn = ctk.CTkButton(
+                self._rfid_entry.master, text="✕", width=32, height=34,
+                fg_color="#374151", hover_color="#4b5563",
+                font=ctk.CTkFont(size=12),
+                command=self._cancel_rfid_capture,
+            )
+            self._rfid_cancel_btn = cancel_btn
+        self._rfid_cancel_btn.pack(side="left")
         self._rfid_entry.bind("<Return>", lambda _e: self._confirm_rfid_capture())
         self._rfid_entry.focus_set()
 
@@ -277,8 +275,8 @@ class StudentEditDialog(ctk.CTkToplevel):
         self._rfid_entry.delete(0, "end")
         self._rfid_entry.pack_forget()
         self._rfid_confirm_btn.pack_forget()
-        if hasattr(self, "_rfid_cancel_btn"):
-            self._rfid_cancel_btn.destroy()
+        if hasattr(self, "_rfid_cancel_btn") and self._rfid_cancel_btn is not None:
+            self._rfid_cancel_btn.pack_forget()
         self._rfid_label.pack(side="left", padx=(0, 12))
         self._rfid_change_btn.pack(side="right")
 

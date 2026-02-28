@@ -13,7 +13,7 @@ Sections:
 from __future__ import annotations
 
 import os
-import shutil
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, filedialog
@@ -34,30 +34,16 @@ from utils.pin_utils import hash_pin, verify_pin
 
 def _perform_backup() -> tuple[bool, str]:
     """
-    Copy attendance.db to backups/attendance_YYYY-MM-DD_HHMMSS.db.
+    Back up attendance.db to backups/attendance_YYYY-MM-DD_HHMMSS.db
+    using the SQLite backup() API (WAL-safe).
 
     Returns:
         (True, dest_path)  on success.
         (False, error_msg) on failure.
     """
+    from utils.backup import create_backup
     from models.database import DB_PATH
-    src = Path(DB_PATH)
-    if not src.exists():
-        return False, f"Database file not found:\n{src}"
-
-    backup_dir = src.parent / "backups"
-    backup_dir.mkdir(exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    dest = backup_dir / f"attendance_{timestamp}.db"
-
-    try:
-        shutil.copy2(str(src), str(dest))
-        log_info(f"Database backup created: {dest}")
-        return True, str(dest)
-    except OSError as exc:
-        log_error(f"Backup failed: {exc}")
-        return False, str(exc)
+    return create_backup(DB_PATH)
 
 
 # ── Section frame factory ──────────────────────────────────────────────────────
@@ -185,7 +171,8 @@ class SettingsTab(ctk.CTkFrame):
             fg_color="#2563eb", hover_color="#1d4ed8",
             command=self._save_threshold,
         ).pack(padx=16, pady=(0, 14), anchor="w")
-
+
+
     # ── 2b. Section Mode ─────────────────────────────────────────────────────
 
     def _build_section_mode_section(self, outer: ctk.CTkScrollableFrame) -> None:
@@ -356,11 +343,13 @@ class SettingsTab(ctk.CTkFrame):
 
         stored_hash = settings_model.get_setting("admin_pin") or ""
 
-        if stored_hash and not verify_pin(current, stored_hash):
-            self._pin_status.configure(
-                text="Current PIN is incorrect.", text_color="#ff6b6b"
-            )
-            return
+        if stored_hash:
+            matched, _upgrade = verify_pin(current, stored_hash)
+            if not matched:
+                self._pin_status.configure(
+                    text="Current PIN is incorrect.", text_color="#ff6b6b"
+                )
+                return
         if not new_pin:
             self._pin_status.configure(
                 text="New PIN cannot be empty.", text_color="#ff6b6b"
@@ -487,7 +476,7 @@ class SettingsTab(ctk.CTkFrame):
 
     def _restore_backup(self) -> None:
         """Pick a backup file, safety-backup the live DB, overwrite it, then close."""
-        from models.database import DB_PATH
+        from models.database import DB_PATH, close_connection
         backup_dir = Path(DB_PATH).parent / "backups"
         backup_dir.mkdir(exist_ok=True)
 
@@ -498,6 +487,19 @@ class SettingsTab(ctk.CTkFrame):
             parent=self._app,
         )
         if not chosen:
+            return
+
+        # Validate that the chosen file is a real SQLite database
+        try:
+            probe = sqlite3.connect(chosen)
+            probe.execute("SELECT count(*) FROM sqlite_master;")
+            probe.close()
+        except sqlite3.DatabaseError:
+            messagebox.showerror(
+                "Invalid File",
+                "The selected file is not a valid SQLite database.",
+                parent=self._app,
+            )
             return
 
         if not messagebox.askyesno(
@@ -513,10 +515,22 @@ class SettingsTab(ctk.CTkFrame):
         # Create a safety backup of the current live database first
         _perform_backup()
 
+        # Close existing DB connections before overwriting
         try:
-            shutil.copy2(chosen, DB_PATH)
+            close_connection()
+        except Exception:
+            pass
+
+        try:
+            # Use SQLite backup API for safe restore
+            src_conn = sqlite3.connect(chosen)
+            dst_conn = sqlite3.connect(str(DB_PATH))
+            with dst_conn:
+                src_conn.backup(dst_conn)
+            dst_conn.close()
+            src_conn.close()
             log_info(f"Database restored from backup: {chosen}")
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
             log_error(f"Restore failed: {exc}")
             messagebox.showerror("Restore Failed", str(exc), parent=self._app)
             return
@@ -526,7 +540,9 @@ class SettingsTab(ctk.CTkFrame):
             "Database restored successfully.\nThe application will now close.",
             parent=self._app,
         )
-        self._app.destroy()
+        # Destroy the root App (not just the AdminPanel) so stale connections are gone
+        root_app = getattr(self._app, "_app", self._app)
+        root_app.destroy()
 
     def _backup_now(self) -> None:
         ok, result = _perform_backup()

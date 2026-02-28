@@ -241,17 +241,23 @@ def search_students(query: str) -> list:
     Args:
         query: Search string; empty string returns all students.
     """
-    all_students = student_model.get_all_students()
     if not query.strip():
-        return list(all_students)
+        return list(student_model.get_all_students())
 
-    q = query.strip().lower()
-    return [
-        s for s in all_students
-        if q in s["first_name"].lower()
-        or q in s["last_name"].lower()
-        or (s["card_id"] and q in s["card_id"].lower())
-    ]
+    q = f"%{query.strip()}%"
+    from models.database import get_connection
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM students
+            WHERE first_name LIKE ? COLLATE NOCASE
+               OR last_name  LIKE ? COLLATE NOCASE
+               OR card_id    LIKE ? COLLATE NOCASE
+            ORDER BY last_name, first_name;
+            """,
+            (q, q, q),
+        ).fetchall()
+    return list(rows)
 
 
 def sort_students(
@@ -277,6 +283,52 @@ def sort_students(
 def get_all_students() -> list:
     """Return the full student list (pass-through to model)."""
     return list(student_model.get_all_students())
+
+
+def get_student_with_sections_by_id(student_id: int) -> Optional[dict]:
+    """Return a single student enriched with section names and attendance info.
+
+    Uses a targeted SQL query instead of loading all students.  Returns ``None``
+    if the student does not exist.
+    """
+    from models.database import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT s.id, s.first_name, s.last_name, s.card_id, s.is_inactive,
+                   GROUP_CONCAT(DISTINCT sec.name) AS section_names,
+                   COUNT(CASE WHEN a.status = 'Present' THEN 1 END) AS attended,
+                   COUNT(DISTINCT sess.id) AS total_sessions
+            FROM   students s
+            LEFT JOIN student_sections ss  ON ss.student_id = s.id
+            LEFT JOIN sections sec         ON sec.id = ss.section_id
+            LEFT JOIN sessions sess        ON sess.section_id = ss.section_id
+            LEFT JOIN attendance a         ON a.student_id = s.id
+                                          AND a.session_id = sess.id
+            WHERE  s.id = ?
+            GROUP BY s.id;
+            """,
+            (student_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    attended = row["attended"] or 0
+    total = row["total_sessions"] or 0
+    pct = f"{attended / total * 100:.0f}%" if total > 0 else "—"
+    return {
+        "id":             row["id"],
+        "first_name":     row["first_name"],
+        "last_name":      row["last_name"],
+        "card_id":        row["card_id"] or "",
+        "sections":       row["section_names"] or "—",
+        "is_inactive":    bool(row["is_inactive"]),
+        "attended":       attended,
+        "total_sessions": total,
+        "attendance_pct": pct,
+    }
 
 
 def get_student_by_card_id(card_id: str):
@@ -336,31 +388,30 @@ def get_all_students_with_sections() -> list[dict]:
     """
     from models.database import get_connection
 
-    # Single query: students + their section names via GROUP_CONCAT
+    # Single query: students + section names + attendance summary
     with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT s.id, s.first_name, s.last_name, s.card_id, s.is_inactive,
-                   GROUP_CONCAT(sec.name, ', ') AS section_names
+                   GROUP_CONCAT(DISTINCT sec.name) AS section_names,
+                   COUNT(CASE WHEN a.status = 'Present' THEN 1 END) AS attended,
+                   COUNT(DISTINCT sess.id) AS total_sessions
             FROM   students s
-            LEFT JOIN student_sections ss ON ss.student_id = s.id
-            LEFT JOIN sections sec        ON sec.id = ss.section_id
+            LEFT JOIN student_sections ss  ON ss.student_id = s.id
+            LEFT JOIN sections sec         ON sec.id = ss.section_id
+            LEFT JOIN sessions sess        ON sess.section_id = ss.section_id
+            LEFT JOIN attendance a         ON a.student_id = s.id
+                                          AND a.session_id = sess.id
             GROUP BY s.id
             ORDER BY CAST(s.card_id AS INTEGER) ASC, s.last_name, s.first_name;
             """,
         ).fetchall()
 
-    # Bulk attendance summary (already a single query)
-    summary_map: dict[int, dict] = {
-        s["id"]: s for s in attendance_model.get_total_attendance_per_student()
-    }
-
     result: list[dict] = []
     for row in rows:
         section_names = row["section_names"] or "—"
-        summary = summary_map.get(row["id"], {})
-        attended = summary.get("attended", 0)
-        total = summary.get("total_sessions", 0)
+        attended = row["attended"] or 0
+        total = row["total_sessions"] or 0
         pct = f"{attended / total * 100:.0f}%" if total > 0 else "—"
         result.append({
             "id":             row["id"],

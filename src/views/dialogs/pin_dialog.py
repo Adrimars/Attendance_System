@@ -163,7 +163,15 @@ class PinDialog(ctk.CTkToplevel):
 
         # Normal login
         self._attempts += 1
-        if verify_pin(pin, self._stored_hash):
+        matched, needs_upgrade = verify_pin(pin, self._stored_hash)
+        if matched:
+            # Auto-upgrade legacy SHA-256 hash to PBKDF2 on successful login
+            if needs_upgrade:
+                try:
+                    settings_model.set_setting("admin_pin", hash_pin(pin))
+                    log_info("Legacy PIN hash auto-upgraded to PBKDF2.")
+                except Exception:
+                    pass  # Non-critical; upgrade will happen next time
             log_info("Admin PIN accepted.")
             self.granted = True
             self.destroy()

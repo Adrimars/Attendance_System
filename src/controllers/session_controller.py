@@ -147,6 +147,7 @@ def end_session(session_id: int) -> Optional[SessionSummary]:
         section_name: str = section["name"] if section else f"Section {sess['section_id']}"
 
         enrolled = section_model.get_enrolled_students(sess["section_id"])
+        active_enrolled = [s for s in enrolled if not s["is_inactive"]]
         attendance_rows = attendance_model.get_attendance_by_session(session_id)
         present_ids: set[int] = {
             row["student_id"]
@@ -155,8 +156,8 @@ def end_session(session_id: int) -> Optional[SessionSummary]:
         }
 
         absent_students: list[AbsentStudentInfo] = []
-        for student in enrolled:
-            if student["id"] not in present_ids and not student["is_inactive"]:
+        for student in active_enrolled:
+            if student["id"] not in present_ids:
                 # Auto-create absence record so the session is complete
                 try:
                     attendance_model.mark_absent(session_id, student["id"], method="Manual")
@@ -175,7 +176,7 @@ def end_session(session_id: int) -> Optional[SessionSummary]:
         summary = SessionSummary(
             session_id=session_id,
             section_name=section_name,
-            total_enrolled=len(enrolled),
+            total_enrolled=len(active_enrolled),
             present_count=len(present_ids),
             absent_count=len(absent_students),
             absent_students=absent_students,

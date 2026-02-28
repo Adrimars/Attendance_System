@@ -13,6 +13,7 @@ Backward compatibility:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 
 _ITERATIONS = 260_000   # OWASP 2023 recommendation for PBKDF2-SHA256
@@ -29,7 +30,7 @@ def hash_pin(pin: str) -> str:
     return f"{salt.hex()}${dk.hex()}"
 
 
-def verify_pin(pin: str, stored: str) -> bool:
+def verify_pin(pin: str, stored: str) -> tuple[bool, bool]:
     """Verify a plaintext PIN against a stored hash.
 
     Accepts both formats:
@@ -41,13 +42,22 @@ def verify_pin(pin: str, stored: str) -> bool:
         stored: The value retrieved from the settings table.
 
     Returns:
-        True if the PIN matches, False otherwise.
+        A tuple ``(matches, needs_upgrade)``.
+        ``needs_upgrade`` is True when a legacy hash was verified successfully
+        and the caller should re-hash with :func:`hash_pin` and persist the
+        upgraded value.
     """
     if "$" not in stored:
-        # Legacy: plain SHA-256, no salt — verify and leave as-is
-        return hashlib.sha256(pin.encode()).hexdigest() == stored
+        # Legacy: plain SHA-256, no salt — constant-time compare
+        legacy_hash = hashlib.sha256(pin.encode()).hexdigest()
+        matches = hmac.compare_digest(legacy_hash, stored)
+        return matches, matches   # needs_upgrade=True only when it matched
 
-    salt_hex, hash_hex = stored.split("$", 1)
-    salt = bytes.fromhex(salt_hex)
-    dk   = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, _ITERATIONS)
-    return dk.hex() == hash_hex
+    try:
+        salt_hex, hash_hex = stored.split("$", 1)
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return False, False
+
+    dk = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, _ITERATIONS)
+    return hmac.compare_digest(dk.hex(), hash_hex), False

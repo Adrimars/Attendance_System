@@ -6,7 +6,7 @@ Events covered: app startup/shutdown, card taps, session start/end, errors, impo
 """
 
 import logging
-import os
+import logging.handlers
 from datetime import datetime
 from pathlib import Path
 
@@ -15,14 +15,22 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # src/utils/logger.py → r
 _LOG_DIR = _PROJECT_ROOT / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 
-_log_filename = _LOG_DIR / f"attendance_{datetime.now().strftime('%Y-%m-%d')}.log"
+_log_filename = _LOG_DIR / "attendance.log"
 
 # ── Configure module-level logger ────────────────────────────────────────────
 _logger = logging.getLogger("attendance_system")
 _logger.setLevel(logging.DEBUG)
 
 if not _logger.handlers:
-    _file_handler = logging.FileHandler(_log_filename, encoding="utf-8")
+    # TimedRotatingFileHandler rotates at midnight and names files by date.
+    _file_handler = logging.handlers.TimedRotatingFileHandler(
+        _log_filename,
+        when="midnight",
+        interval=1,
+        backupCount=90,       # keep ~3 months of logs
+        encoding="utf-8",
+    )
+    _file_handler.suffix = "%Y-%m-%d"
     _file_handler.setLevel(logging.DEBUG)
     _formatter = logging.Formatter(
         fmt="%(asctime)s [%(levelname)s] %(message)s",
@@ -118,6 +126,6 @@ def log_import_event(
 
 
 def get_log_file_path() -> str:
-    """Return the absolute path of today's log file."""
+    """Return the absolute path of the current log file."""
     return str(_log_filename)
 

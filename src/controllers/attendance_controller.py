@@ -276,12 +276,10 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
         last_name: str   = student["last_name"]
         is_inactive: bool = bool(student["is_inactive"])
 
-        # Attendance summary for the banner (fetched before the current tap is applied)
-        attended, total_sessions = attendance_model.get_student_attendance_summary(student_id)
-
         # ── Check if student has ANY sections enrolled at all ─────────────────────
         all_enrolled = student_model.get_sections_for_student(student_id)
         if not all_enrolled:
+            attended, total_sessions = attendance_model.get_student_attendance_summary(student_id)
             log_info(
                 f"Passive tap — no sections: student_id={student_id} "
                 f"({first_name} {last_name})"
@@ -307,6 +305,7 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
         sections_today = section_model.get_sections_for_student_on_day(student_id, today_day)
 
         if not sections_today:
+            attended, total_sessions = attendance_model.get_student_attendance_summary(student_id)
             log_info(
                 f"Passive tap: student_id={student_id} ({first_name} {last_name}) — "
                 f"no sections scheduled on {today_day}."
@@ -362,7 +361,7 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
                 f"all sections already marked={already_marked}"
             )
             result_type = TapResultType.DUPLICATE_TAP
-            attended_now, total_now = attended, total_sessions
+            attended_now, total_now = attendance_model.get_student_attendance_summary(student_id)
             message = (
                 f"{first_name} {last_name} already marked today: "
                 f"{', '.join(already_marked)}"

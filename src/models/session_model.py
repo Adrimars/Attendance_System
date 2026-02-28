@@ -3,7 +3,7 @@ session_model.py — Data-access layer for the sessions table.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from models.database import get_connection
@@ -22,9 +22,9 @@ def create_session(section_id: int) -> int:
     Returns:
         The auto-incremented id of the new session.
     """
-    now = datetime.now()
-    date_str = now.date().isoformat()            # local date
-    start_time_str = now.isoformat()             # local timestamp (consistent)
+    now_utc = datetime.now(timezone.utc)
+    date_str = datetime.now().date().isoformat()   # local calendar date
+    start_time_str = now_utc.isoformat()           # UTC timestamp
 
     with get_connection() as conn:
         cursor = conn.execute(
