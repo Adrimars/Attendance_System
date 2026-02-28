@@ -34,7 +34,7 @@ _COLUMNS: list[tuple[str, str, int]] = [
 class StudentsTab(ctk.CTkFrame):
     """Students management tab — fully implemented in Phase 2."""
 
-    _PAGE_SIZE = 50  # Rows rendered per page for performance
+    _PAGE_SIZE = 20  # Rows rendered per page for performance
 
     def __init__(self, parent: Any, root: Any) -> None:
         super().__init__(parent, fg_color="#1a1a2e", corner_radius=0)
