@@ -43,11 +43,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "Language saved. Restart the app to apply all label changes.",
         "tr": "Dil kaydedildi. Tüm etiket değişikliklerinin uygulanması için uygulamayı yeniden başlatın.",
     },
-    # ── Export section ────────────────────────────────────────────────────
-    "export_section":      {"en": "Export Attendance",                  "tr": "Yoklama Dışa Aktar"},
-    "export_today_csv":    {"en": "⬇  Export Today to CSV",            "tr": "⬇  Bugünü CSV'e Aktar"},
-    "export_all_csv":      {"en": "📋  Export All to CSV",              "tr": "📋  Tümünü CSV'e Aktar"},
-    "export_sheets":       {"en": "☁  Export to Google Sheets",        "tr": "☁  Google Sheets'e Aktar"},
     # ── Shared status strings ─────────────────────────────────────────────
     "present":             {"en": "Present",                            "tr": "Var"},
     "absent":              {"en": "Absent",                             "tr": "Yok"},

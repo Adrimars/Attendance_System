@@ -196,9 +196,8 @@ def preview_import(
             if str(row.get(col, "")).strip() not in ("", "0")
         )
 
-        # Apply filter rule
-        has_card = bool(card_id)
-        include  = has_card or (att_count >= threshold)
+        # Apply filter rule: only include students meeting the threshold
+        include = att_count >= threshold
 
         parsed.append(
             ImportStudentRow(

@@ -129,14 +129,19 @@ class AttendanceTab(ctk.CTkFrame):
         self._feedback_lbl.pack(expand=True)
 
         # -- Hidden RFID capture entry ----------------------------------------
+        # Use a larger widget footprint to reliably capture keyboard input
+        # from USB RFID readers on all Windows systems.
         self._rfid_entry = ctk.CTkEntry(
-            self, width=1, height=1,
+            self, width=10, height=1,
             fg_color=_BASE_BG, border_width=0, text_color=_BASE_BG,
+            cursor="arrow",
         )
         self._rfid_entry.pack()
         self._rfid_entry.bind("<Return>", self._on_rfid_enter)
         self._rfid_entry.bind("<FocusIn>",  lambda _e: self._set_listening(True))
         self._rfid_entry.bind("<FocusOut>", self._on_rfid_focus_out)
+        # Also bind KeyPress to ensure the entry actually receives keystrokes
+        self._rfid_entry.bind("<Key>", self._on_rfid_key)
         self.bind("<Button-1>", lambda _e: self._rfid_entry.focus_set())
         self._rfid_entry.focus_set()
 
@@ -399,8 +404,8 @@ class AttendanceTab(ctk.CTkFrame):
             self._sim_entry.focus_set()
             return
 
-        if not (card_id.isdigit() and len(card_id) == 10):
-            self._flash(_FLASH_RED, f"Sim: invalid format '{card_id}'  (10 digits required)")
+        if not (card_id.isdigit() and len(card_id) >= 4):
+            self._flash(_FLASH_RED, f"Sim: invalid format '{card_id}'  (digits required, 4+ chars)")
             self._sim_entry.focus_set()
             return
 
@@ -421,7 +426,7 @@ class AttendanceTab(ctk.CTkFrame):
         self._set_listening(False)
         # Only try to reclaim focus when sim panel is hidden AND no modal is open
         if not getattr(self, "_sim_visible", False):
-            self.after(200, self._try_refocus)
+            self.after(100, self._try_refocus)
 
     def _try_refocus(self) -> None:
         """Give focus back to the RFID entry unless something else needs it."""
@@ -430,7 +435,7 @@ class AttendanceTab(ctk.CTkFrame):
         try:
             # grab_current() is non-None when a modal dialog (AdminPanel, etc.) is open
             if self.winfo_toplevel().grab_current() is not None:
-                self.after(500, self._try_refocus)  # wait and retry
+                self.after(300, self._try_refocus)  # wait and retry
                 return
             self._rfid_entry.focus_set()
         except Exception as exc:
@@ -452,14 +457,25 @@ class AttendanceTab(ctk.CTkFrame):
         self._rfid_entry.delete(0, "end")
         if not card_id:
             return
-        # ── 10-digit guard ───────────────────────────────────────────
-        if not (card_id.isdigit() and len(card_id) == 10):
-            self._flash(_FLASH_RED, f"Invalid card format: '{card_id}'  (expected 10 digits)")
+        # ── Flexible card format guard ───────────────────────────────
+        if not card_id.isdigit() or len(card_id) < 4:
+            self._flash(_FLASH_RED, f"Invalid card format: '{card_id}'")
             return
         self._process_card(card_id)
 
+    def _on_rfid_key(self, event: object) -> None:
+        """Keep the entry focused and ensure keystrokes are captured."""
+        # This handler exists to confirm the entry is receiving input.
+        pass
+
     def _process_card(self, card_id: str) -> None:
         """Shared processing logic for both hardware taps and simulation."""
+        # ── Section Mode intercept ──────────────────────────────────────────
+        from models import settings_model
+        if settings_model.get_setting("section_mode") == "1":
+            self._process_card_section_mode(card_id)
+            return
+
         result = attendance_ctrl.process_rfid_passive(card_id)
 
         if result.result_type == TapResultType.KNOWN_PRESENT:
@@ -490,6 +506,57 @@ class AttendanceTab(ctk.CTkFrame):
             self._flash(_BASE_BG, "")
             from tkinter import messagebox
             messagebox.showerror("Tap Error", result.message, parent=self._app)
+
+    def _process_card_section_mode(self, card_id: str) -> None:
+        """Section Mode: open section picker before marking present."""
+        import controllers.student_controller as student_ctrl
+        from models import section_model
+        from datetime import datetime as _dt
+
+        student = student_ctrl.get_student_by_card_id(card_id)
+        if student is None:
+            # Unknown card — fall back to normal flow (opens registration)
+            self._flash(_FLASH_RED, "Unknown card -- please complete registration.")
+            self._open_registration(card_id)
+            return
+
+        sid = student["id"]
+        fname = student["first_name"]
+        lname = student["last_name"]
+
+        # Get currently enrolled section IDs
+        today_day = _english_weekday(_dt.now())
+        enrolled_today = section_model.get_sections_for_student_on_day(sid, today_day)
+        pre_selected = [s["id"] for s in enrolled_today]
+
+        dlg = SectionAssignDialog(
+            self._app,
+            student_id=sid,
+            first_name=fname,
+            last_name=lname,
+            pre_selected=pre_selected,
+        )
+        self._app.wait_window(dlg)
+
+        if dlg.confirmed and dlg.section_ids:
+            marked = attendance_ctrl.mark_present_for_enrolled_sections(
+                sid, dlg.section_ids
+            )
+            if marked:
+                self._flash(
+                    _FLASH_GREEN,
+                    f"{fname} {lname} — marked present in {len(marked)} section(s).",
+                )
+            else:
+                self._flash(_FLASH_GREEN, f"{fname} {lname} — sections updated.")
+            self._refresh_log()
+        else:
+            self._flash(_BASE_BG, "Section mode: skipped.")
+
+        if getattr(self, "_sim_visible", False):
+            self._sim_entry.focus_set()
+        else:
+            self._rfid_entry.focus_set()
 
     # -------------------------------------------------------------------------
     # Section assignment (known student, no sections enrolled)

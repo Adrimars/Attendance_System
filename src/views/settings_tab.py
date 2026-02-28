@@ -99,11 +99,11 @@ class SettingsTab(ctk.CTkFrame):
 
         self._build_pin_section(outer)
         self._build_threshold_section(outer)
+        self._build_section_mode_section(outer)
         self._build_language_section(outer)
         self._build_credentials_section(outer)
         self._build_backup_section(outer)
         self._build_import_section(outer)
-        self._build_export_section(outer)
         self._build_sheets_summary_section(outer)
         self._build_inactive_section(outer)
         self._build_daily_report_section(outer)
@@ -185,6 +185,35 @@ class SettingsTab(ctk.CTkFrame):
             fg_color="#2563eb", hover_color="#1d4ed8",
             command=self._save_threshold,
         ).pack(padx=16, pady=(0, 14), anchor="w")
+
+    # ── 2b. Section Mode ─────────────────────────────────────────────────────
+
+    def _build_section_mode_section(self, outer: ctk.CTkScrollableFrame) -> None:
+        frame = _section(outer, "Section Mode")
+
+        self._section_mode_var = ctk.BooleanVar(
+            value=settings_model.get_setting("section_mode") == "1"
+        )
+
+        row = ctk.CTkFrame(frame, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=6)
+
+        ctk.CTkSwitch(
+            row, text="Enable Section Mode",
+            variable=self._section_mode_var,
+            font=ctk.CTkFont(size=13), text_color="#c0c0d0",
+            command=self._toggle_section_mode,
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            row,
+            text="When ON, each RFID scan opens a section picker before marking present.",
+            font=ctk.CTkFont(size=11), text_color="#6b7280", wraplength=400,
+        ).pack(side="left", padx=(16, 0))
+
+    def _toggle_section_mode(self) -> None:
+        val = "1" if self._section_mode_var.get() else "0"
+        settings_model.set_setting("section_mode", val)
 
     # ── 3. Language ───────────────────────────────────────────────────────────
 
@@ -532,6 +561,8 @@ class SettingsTab(ctk.CTkFrame):
 
     def _push_sheets_summary(self) -> None:
         """Save the URL setting, then push the attendance summary to Google Sheets."""
+        import threading
+
         url = self._sheets_summary_url.get().strip()
         if not url:
             self._sheets_summary_status.configure(
@@ -549,9 +580,22 @@ class SettingsTab(ctk.CTkFrame):
         self._sheets_summary_status.configure(
             text="Pushing to Google Sheets…", text_color="#93c5fd"
         )
-        self._app.update_idletasks()
 
-        ok, result = attendance_ctrl.push_summary_to_sheets(url)
+        self._push_result: tuple = (False, "")
+
+        def _bg_push() -> None:
+            self._push_result = attendance_ctrl.push_summary_to_sheets(url)
+
+        thread = threading.Thread(target=_bg_push, daemon=True)
+        thread.start()
+        self._poll_push_thread(thread)
+
+    def _poll_push_thread(self, thread) -> None:
+        import threading
+        if thread.is_alive():
+            self.after(100, lambda: self._poll_push_thread(thread))
+            return
+        ok, result = self._push_result
         if ok:
             self._sheets_summary_status.configure(
                 text=f"✓ {result}", text_color="#4ade80"
@@ -567,184 +611,6 @@ class SettingsTab(ctk.CTkFrame):
     # ──────────────────────────────────────────────────────────────────────────
     # Public hook
     # ──────────────────────────────────────────────────────────────────────────
-
-    # ── 7. Export Attendance ──────────────────────────────────────────────────
-
-    def _build_export_section(self, outer: ctk.CTkScrollableFrame) -> None:
-        frame = _section(outer, t("export_section"))
-
-        ctk.CTkLabel(
-            frame,
-            text="Export attendance records to CSV or Google Sheets.",
-            font=ctk.CTkFont(size=12), text_color="#6b7280",
-        ).pack(padx=16, pady=(0, 6), anchor="w")
-
-        self._export_status = ctk.CTkLabel(
-            frame, text="", font=ctk.CTkFont(size=12), text_color="#4ade80",
-            wraplength=600, justify="left",
-        )
-        self._export_status.pack(padx=16, pady=(0, 4), anchor="w")
-
-        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
-        btn_row.pack(fill="x", padx=16, pady=(0, 14))
-
-        ctk.CTkButton(
-            btn_row, text=t("export_today_csv"), width=200, height=42,
-            fg_color="#374151", hover_color="#4b5563",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._export_today_csv,
-        ).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(
-            btn_row, text=t("export_all_csv"), width=190, height=42,
-            fg_color="#374151", hover_color="#4b5563",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._export_all_csv,
-        ).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(
-            btn_row, text=t("export_sheets"), width=220, height=42,
-            fg_color="#166534", hover_color="#15803d",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._export_sheets,
-        ).pack(side="left")
-
-        # PDF export row
-        pdf_row = ctk.CTkFrame(frame, fg_color="transparent")
-        pdf_row.pack(fill="x", padx=16, pady=(0, 14))
-
-        ctk.CTkButton(
-            pdf_row, text="📄  Export Today PDF", width=200, height=42,
-            fg_color="#7c2d12", hover_color="#9a3412",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._export_today_pdf,
-        ).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(
-            pdf_row, text="📄  Export All PDF", width=190, height=42,
-            fg_color="#7c2d12", hover_color="#9a3412",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._export_all_pdf,
-        ).pack(side="left")
-
-    # ── Export handlers ───────────────────────────────────────────────────────
-
-    def _export_today_csv(self) -> None:
-        from tkinter import filedialog
-        from datetime import date as _date
-        default_name = f"attendance_{_date.today().isoformat()}.csv"
-        path = filedialog.asksaveasfilename(
-            title="Export Today's Attendance to CSV",
-            initialfile=default_name,
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            parent=self._app,
-        )
-        if not path:
-            return
-        ok, result = attendance_ctrl.export_today_to_csv(path)
-        if ok:
-            self._export_status.configure(
-                text=f"✓ Today's attendance exported to:\n{result}",
-                text_color="#4ade80",
-            )
-            messagebox.showinfo("Export Complete", f"Exported to:\n{result}", parent=self._app)
-        else:
-            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
-            messagebox.showerror("Export Failed", result, parent=self._app)
-        self.after(6000, lambda: self._export_status.configure(text=""))
-
-    def _export_all_csv(self) -> None:
-        from tkinter import filedialog
-        path = filedialog.asksaveasfilename(
-            title="Export All Attendance to CSV",
-            initialfile="attendance_all.csv",
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            parent=self._app,
-        )
-        if not path:
-            return
-        ok, result = attendance_ctrl.export_all_to_csv(path)
-        if ok:
-            self._export_status.configure(
-                text=f"✓ All attendance exported to:\n{result}",
-                text_color="#4ade80",
-            )
-            messagebox.showinfo("Export Complete", f"Exported to:\n{result}", parent=self._app)
-        else:
-            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
-            messagebox.showerror("Export Failed", result, parent=self._app)
-        self.after(6000, lambda: self._export_status.configure(text=""))
-
-    def _export_today_pdf(self) -> None:
-        from datetime import date as _date
-        default_name = f"attendance_{_date.today().isoformat()}.pdf"
-        path = filedialog.asksaveasfilename(
-            title="Export Today's Attendance to PDF",
-            initialfile=default_name,
-            defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
-            parent=self._app,
-        )
-        if not path:
-            return
-        ok, result = attendance_ctrl.export_today_to_pdf(path)
-        if ok:
-            self._export_status.configure(
-                text=f"✓ Today's attendance exported to PDF:\n{result}",
-                text_color="#4ade80",
-            )
-            messagebox.showinfo("Export Complete", f"PDF exported to:\n{result}", parent=self._app)
-        else:
-            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
-            messagebox.showerror("Export Failed", result, parent=self._app)
-        self.after(6000, lambda: self._export_status.configure(text=""))
-
-    def _export_all_pdf(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="Export All Attendance to PDF",
-            initialfile="attendance_all.pdf",
-            defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
-            parent=self._app,
-        )
-        if not path:
-            return
-        ok, result = attendance_ctrl.export_all_to_pdf(path)
-        if ok:
-            self._export_status.configure(
-                text=f"✓ All attendance exported to PDF:\n{result}",
-                text_color="#4ade80",
-            )
-            messagebox.showinfo("Export Complete", f"PDF exported to:\n{result}", parent=self._app)
-        else:
-            self._export_status.configure(text=f"❌ Export failed: {result}", text_color="#ff6b6b")
-            messagebox.showerror("Export Failed", result, parent=self._app)
-        self.after(6000, lambda: self._export_status.configure(text=""))
-
-    def _export_sheets(self) -> None:
-        """Ask for a Google Sheet URL and export all attendance records to it."""
-        # Prompt user for the spreadsheet URL
-        from tkinter import simpledialog
-        url = simpledialog.askstring(
-            "Export to Google Sheets",
-            "Paste the full Google Sheets URL (the sheet must be shared with\n"
-            "the service account e-mail in your credentials JSON):",
-            parent=self._app,
-        )
-        if not url or not url.strip():
-            return
-        self._export_status.configure(text="Exporting to Google Sheets…", text_color="#93c5fd")
-        self._app.update_idletasks()
-        ok, result = attendance_ctrl.export_to_google_sheets(url.strip())
-        if ok:
-            self._export_status.configure(text=f"✓ {result}", text_color="#4ade80")
-            messagebox.showinfo("Export Complete", result, parent=self._app)
-        else:
-            self._export_status.configure(text=f"❌ {result}", text_color="#ff6b6b")
-            messagebox.showerror("Export Failed", result, parent=self._app)
-        self.after(6000, lambda: self._export_status.configure(text=""))
 
     # ── 8. Google Sheets Summary ─────────────────────────────────────────────
 

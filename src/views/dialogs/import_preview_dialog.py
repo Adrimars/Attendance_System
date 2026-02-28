@@ -11,6 +11,7 @@ Flow:
 
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 import customtkinter as ctk
@@ -194,15 +195,30 @@ class ImportPreviewDialog(ctk.CTkToplevel):
             text="⏳ Connecting to Google Sheets…", text_color="#9ca3af"
         )
         self._preview_btn.configure(state="disabled")
-        self.update()  # flush UI before blocking call
 
+        # Run in background thread to avoid blocking UI
+        self._preview_result: tuple = (None, "")
+        thread = threading.Thread(
+            target=self._bg_load_preview, args=(url, thresh), daemon=True
+        )
+        thread.start()
+        self._poll_preview_thread(thread)
+
+    def _bg_load_preview(self, url: str, thresh: int) -> None:
+        """Background thread target for preview_import."""
         try:
-            preview, err = import_ctrl.preview_import(url, thresh)
+            self._preview_result = import_ctrl.preview_import(url, thresh)
         except Exception as exc:
             log_error(f"ImportPreviewDialog: unexpected error — {exc}")
-            preview, err = None, str(exc)
-        finally:
-            self._preview_btn.configure(state="normal")
+            self._preview_result = (None, str(exc))
+
+    def _poll_preview_thread(self, thread: threading.Thread) -> None:
+        if thread.is_alive():
+            self.after(100, lambda: self._poll_preview_thread(thread))
+            return
+
+        self._preview_btn.configure(state="normal")
+        preview, err = self._preview_result
 
         if preview is None:
             self._status.configure(text=f"❌ {err}", text_color="#ff6b6b")
@@ -281,17 +297,34 @@ class ImportPreviewDialog(ctk.CTkToplevel):
 
         self._confirm_btn.configure(state="disabled")
         self._status.configure(text="⏳ Importing…", text_color="#9ca3af")
-        self.update()
 
+        # Run in background thread
+        self._import_result: tuple = (0, 0, "")
+        thread = threading.Thread(
+            target=self._bg_commit_import, daemon=True
+        )
+        thread.start()
+        self._poll_import_thread(thread)
+
+    def _bg_commit_import(self) -> None:
+        """Background thread target for commit_import."""
         try:
-            imported, skipped, err = import_ctrl.commit_import(self._preview)
+            self._import_result = import_ctrl.commit_import(self._preview)
         except Exception as exc:
             log_error(f"ImportPreviewDialog: commit error — {exc}")
-            imported, skipped, err = 0, 0, str(exc)
+            self._import_result = (0, 0, str(exc))
+
+    def _poll_import_thread(self, thread: threading.Thread) -> None:
+        if thread.is_alive():
+            self.after(100, lambda: self._poll_import_thread(thread))
+            return
+
+        imported, skipped, err = self._import_result
 
         if err:
             self._status.configure(text=f"❌ {err}", text_color="#ff6b6b")
             messagebox.showerror("Import Error", err, parent=self)
+            self._confirm_btn.configure(state="normal")
             return
 
         self.imported_count = imported

@@ -279,6 +279,11 @@ def get_all_students() -> list:
     return list(student_model.get_all_students())
 
 
+def get_student_by_card_id(card_id: str):
+    """Return a student row by card_id, or None."""
+    return student_model.get_student_by_card_id(card_id)
+
+
 def delete_student(student_id: int) -> tuple[bool, str]:
     """
     Delete a student by id.
@@ -321,23 +326,38 @@ def get_all_students_with_sections() -> list[dict]:
     Return all students enriched with their comma-separated section names,
     attendance percentage, and inactive status.
 
+    Optimised: uses 2 bulk queries instead of N+1 per-student calls.
+
     Returns:
         List of dicts: {id, first_name, last_name, card_id, sections,
                         is_inactive, attended, total_sessions, attendance_pct}.
         card_id is '' if not assigned.  sections is '—' if none.
         attendance_pct is e.g. '80%' or '—' if no sessions.
     """
-    rows = student_model.get_all_students()
+    from models.database import get_connection
 
-    # Fetch attendance summary for all students in one query
+    # Single query: students + their section names via GROUP_CONCAT
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.id, s.first_name, s.last_name, s.card_id, s.is_inactive,
+                   GROUP_CONCAT(sec.name, ', ') AS section_names
+            FROM   students s
+            LEFT JOIN student_sections ss ON ss.student_id = s.id
+            LEFT JOIN sections sec        ON sec.id = ss.section_id
+            GROUP BY s.id
+            ORDER BY CAST(s.card_id AS INTEGER) ASC, s.last_name, s.first_name;
+            """,
+        ).fetchall()
+
+    # Bulk attendance summary (already a single query)
     summary_map: dict[int, dict] = {
         s["id"]: s for s in attendance_model.get_total_attendance_per_student()
     }
 
     result: list[dict] = []
     for row in rows:
-        secs = student_model.get_sections_for_student(row["id"])
-        section_names = ", ".join(s["name"] for s in secs) if secs else "—"
+        section_names = row["section_names"] or "—"
         summary = summary_map.get(row["id"], {})
         attended = summary.get("attended", 0)
         total = summary.get("total_sessions", 0)

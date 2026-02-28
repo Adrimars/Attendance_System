@@ -8,12 +8,10 @@ TapResult.
 
 from __future__ import annotations
 
-import csv
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum, auto
-from pathlib import Path
 from typing import Optional
 
 import models.attendance_model as attendance_model
@@ -330,11 +328,16 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
 
         for sec in sections_today:
             session_id = session_model.get_or_create_session(sec["id"], today_date)
-            if attendance_model.is_duplicate_tap(session_id, student_id):
-                already_marked.append(sec["name"])
-            else:
+            existing = attendance_model.get_attendance_record(session_id, student_id)
+            if existing is None:
                 attendance_model.mark_present(session_id, student_id, method="RFID")
                 newly_marked.append(sec["name"])
+            elif existing["status"] == "Absent":
+                # Override manual Absent → Present on RFID scan
+                attendance_model.toggle_status(session_id, student_id)
+                newly_marked.append(sec["name"])
+            else:
+                already_marked.append(sec["name"])
 
         if newly_marked:
             log_info(
@@ -410,13 +413,18 @@ def mark_present_for_enrolled_sections(
     for sec_id in section_ids:
         try:
             session_id = session_model.get_or_create_session(sec_id, today)
-            if not attendance_model.is_duplicate_tap(session_id, student_id):
+            existing = attendance_model.get_attendance_record(session_id, student_id)
+            if existing is None:
                 attendance_model.mark_present(session_id, student_id, method="RFID")
                 marked.append(str(sec_id))
-                log_info(
-                    f"Post-registration mark-present: student={student_id} "
-                    f"section={sec_id} session={session_id}"
-                )
+            elif existing["status"] == "Absent":
+                attendance_model.toggle_status(session_id, student_id)
+                marked.append(str(sec_id))
+            # else: already Present — skip
+            log_info(
+                f"Post-registration mark-present: student={student_id} "
+                f"section={sec_id} session={session_id}"
+            )
         except sqlite3.Error as exc:
             log_error(
                 f"DB error marking post-registration attendance: "
@@ -644,349 +652,6 @@ def get_today_log() -> list[dict]:
     )
 
 
-# ── CSV Export ─────────────────────────────────────────────────────────────────
-
-_CSV_FIELDS = ["date", "first_name", "last_name", "section_name",
-               "status", "method", "timestamp"]
-
-
-def _write_attendance_csv(records: list[dict], filepath: str) -> None:
-    """Write a list of attendance record dicts to a UTF-8 BOM CSV file.
-
-    The BOM ensures Excel on Windows opens the file with the correct encoding.
-    """
-    with open(filepath, "w", newline="", encoding="utf-8-sig") as fh:
-        writer = csv.DictWriter(fh, fieldnames=_CSV_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        for rec in records:
-            ts = rec.get("timestamp", "")
-            # Extract the date portion from the ISO-8601 timestamp
-            try:
-                date_part = datetime.fromisoformat(ts).date().isoformat()
-            except Exception:
-                date_part = rec.get("date", "")
-            writer.writerow({
-                "date":         date_part,
-                "first_name":   rec.get("first_name", ""),
-                "last_name":    rec.get("last_name", ""),
-                "section_name": rec.get("section_name", ""),
-                "status":       rec.get("status", ""),
-                "method":       rec.get("method", ""),
-                "timestamp":    ts,
-            })
-
-
-def export_today_to_csv(filepath: str) -> tuple[bool, str]:
-    """Export today's attendance records to a CSV file.
-
-    Args:
-        filepath: Absolute path (including filename) for the output file.
-
-    Returns:
-        (True, filepath)     on success.
-        (False, error_msg)   on failure.
-    """
-    try:
-        records = get_today_log()
-        _write_attendance_csv(records, filepath)
-        log_info(f"Exported today's attendance to CSV: {filepath} ({len(records)} rows)")
-        return True, filepath
-    except Exception as exc:
-        log_error(f"CSV export (today) failed: {exc}")
-        return False, str(exc)
-
-
-def export_all_to_csv(filepath: str) -> tuple[bool, str]:
-    """Export every attendance record in the database to a CSV file.
-
-    Args:
-        filepath: Absolute path (including filename) for the output file.
-
-    Returns:
-        (True, filepath)     on success.
-        (False, error_msg)   on failure.
-    """
-    try:
-        records = attendance_model.get_all_attendance_with_details()
-        _write_attendance_csv(records, filepath)
-        log_info(f"Exported all attendance to CSV: {filepath} ({len(records)} rows)")
-        return True, filepath
-    except Exception as exc:
-        log_error(f"CSV export (all) failed: {exc}")
-        return False, str(exc)
-
-
-# ── PDF export helpers ────────────────────────────────────────────────────────
-
-def _write_attendance_pdf(
-    records: list[dict],
-    filepath: str,
-    title: str = "Attendance Report",
-) -> None:
-    """Render *records* as a styled PDF table using ReportLab.
-
-    Columns: Date | First Name | Last Name | Section | Status | Method
-    Each row is colour-coded by status (green = Present, red = Absent).
-
-    Args:
-        records:  List of dicts as returned by the attendance model helpers.
-        filepath: Destination file path (must end with .pdf).
-        title:    Heading text shown at the top of the document.
-    """
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-    from reportlab.lib.enums import TA_CENTER
-
-    doc = SimpleDocTemplate(
-        filepath,
-        pagesize=landscape(A4),
-        leftMargin=1.5 * cm,
-        rightMargin=1.5 * cm,
-        topMargin=1.5 * cm,
-        bottomMargin=1.5 * cm,
-    )
-
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "ReportTitle",
-        parent=styles["Title"],
-        fontSize=18,
-        spaceAfter=4,
-        textColor=colors.HexColor("#1e3a5f"),
-        alignment=TA_CENTER,
-    )
-    sub_style = ParagraphStyle(
-        "ReportSub",
-        parent=styles["Normal"],
-        fontSize=9,
-        textColor=colors.HexColor("#6b7280"),
-        alignment=TA_CENTER,
-        spaceAfter=12,
-    )
-
-    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    present_count = sum(1 for r in records if r.get("status") == "Present")
-    absent_count  = len(records) - present_count
-
-    story = [
-        Paragraph(title, title_style),
-        Paragraph(
-            f"Generated: {generated_at} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"Total: {len(records)} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"Present: {present_count} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"Absent: {absent_count}",
-            sub_style,
-        ),
-        Spacer(1, 0.2 * cm),
-    ]
-
-    # ── Build table data ───────────────────────────────────────────────────────
-    headers = ["#", "Date", "First Name", "Last Name", "Section", "Status", "Method"]
-    col_widths = [1.0 * cm, 2.6 * cm, 3.8 * cm, 3.8 * cm, 4.5 * cm, 2.4 * cm, 2.6 * cm]
-
-    table_data = [headers]
-    row_colors: list[tuple[int, colors.Color]] = []  # (row_index, fill_color)
-
-    STATUS_PRESENT_BG = colors.HexColor("#dcfce7")
-    STATUS_ABSENT_BG  = colors.HexColor("#fee2e2")
-
-    for i, rec in enumerate(records, start=1):
-        ts = rec.get("timestamp", "")
-        try:
-            date_part = datetime.fromisoformat(ts).date().isoformat()
-        except Exception:
-            date_part = rec.get("date", "")
-
-        status = rec.get("status", "")
-        table_data.append([
-            str(i),
-            date_part,
-            rec.get("first_name", ""),
-            rec.get("last_name", ""),
-            rec.get("section_name", ""),
-            status,
-            rec.get("method", ""),
-        ])
-        # +1 because row 0 is the header
-        bg = STATUS_PRESENT_BG if status == "Present" else STATUS_ABSENT_BG
-        row_colors.append((i, bg))
-
-    tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
-
-    # ── Base style ─────────────────────────────────────────────────────────────
-    style_cmds = [
-        # Header
-        ("BACKGROUND",  (0, 0), (-1, 0), colors.HexColor("#1e3a5f")),
-        ("TEXTCOLOR",   (0, 0), (-1, 0), colors.white),
-        ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",    (0, 0), (-1, 0), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-        ("TOPPADDING",  (0, 0), (-1, 0), 8),
-        # Body
-        ("FONTNAME",    (0, 1), (-1, -1), "Helvetica"),
-        ("FONTSIZE",    (0, 1), (-1, -1), 9),
-        ("TOPPADDING",  (0, 1), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
-        # Grid
-        ("GRID",        (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
-        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
-        # Align # column centre
-        ("ALIGN",       (0, 0), (0, -1), "CENTER"),
-    ]
-    # Per-row status colours (override ROWBACKGROUNDS)
-    for row_idx, bg in row_colors:
-        style_cmds.append(("BACKGROUND", (0, row_idx), (-1, row_idx), bg))
-
-    tbl.setStyle(TableStyle(style_cmds))
-    story.append(tbl)
-
-    doc.build(story)
-
-
-def export_today_to_pdf(filepath: str) -> tuple[bool, str]:
-    """Export today's attendance records to a PDF file.
-
-    Args:
-        filepath: Absolute path (including filename) for the output .pdf file.
-
-    Returns:
-        (True, filepath)   on success.
-        (False, error_msg) on failure.
-    """
-    try:
-        records = get_today_log()
-        _write_attendance_pdf(
-            records,
-            filepath,
-            title=f"Today's Attendance Report — {date.today().isoformat()}",
-        )
-        log_info(f"Exported today's attendance to PDF: {filepath} ({len(records)} rows)")
-        return True, filepath
-    except Exception as exc:
-        log_error(f"PDF export (today) failed: {exc}")
-        return False, str(exc)
-
-
-def export_all_to_pdf(filepath: str) -> tuple[bool, str]:
-    """Export every attendance record in the database to a PDF file.
-
-    Args:
-        filepath: Absolute path (including filename) for the output .pdf file.
-
-    Returns:
-        (True, filepath)   on success.
-        (False, error_msg) on failure.
-    """
-    try:
-        records = attendance_model.get_all_attendance_with_details()
-        _write_attendance_pdf(
-            records,
-            filepath,
-            title="Full Attendance Report",
-        )
-        log_info(f"Exported all attendance to PDF: {filepath} ({len(records)} rows)")
-        return True, filepath
-    except Exception as exc:
-        log_error(f"PDF export (all) failed: {exc}")
-        return False, str(exc)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-
-def export_to_google_sheets(
-    spreadsheet_url: str,
-    worksheet_title: str = "Attendance Export",
-) -> tuple[bool, str]:
-    """Export all attendance records to a Google Sheet.
-
-    The function appends all rows to a worksheet named *worksheet_title*
-    inside the spreadsheet identified by *spreadsheet_url*.  If the
-    worksheet does not yet exist it is created.  Existing content is
-    **replaced** (worksheet is cleared before writing).
-
-    Credentials are read from the ``google_credentials_path`` setting.
-
-    Args:
-        spreadsheet_url:  Full URL or spreadsheet-key string.
-        worksheet_title:  Name of the target worksheet tab.
-
-    Returns:
-        (True, info_msg)    on success.
-        (False, error_msg)  on failure.
-    """
-    try:
-        import gspread  # type: ignore[import]
-        from google.oauth2.service_account import Credentials  # type: ignore[import]
-    except ImportError as exc:
-        return False, f"gspread / google-auth not installed: {exc}"
-
-    import models.settings_model as settings_model
-    creds_path = settings_model.get_setting("google_credentials_path") or ""
-    if not creds_path or not Path(creds_path).is_file():
-        return (
-            False,
-            "Google credentials file not configured.\n"
-            "Set the path in Settings → Google Credentials.",
-        )
-
-    try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_url(spreadsheet_url)
-    except gspread.exceptions.APIError as exc:
-        log_error(f"Google Sheets API error during export: {exc}")
-        return False, f"Google Sheets API error:\n{exc}"
-    except Exception as exc:
-        log_error(f"Failed to open spreadsheet: {exc}")
-        return False, f"Could not open spreadsheet:\n{exc}"
-
-    try:
-        try:
-            ws = sh.worksheet(worksheet_title)
-            ws.clear()
-        except gspread.exceptions.WorksheetNotFound:
-            ws = sh.add_worksheet(title=worksheet_title, rows=1000, cols=20)
-
-        records = attendance_model.get_all_attendance_with_details()
-        header = ["Date", "First Name", "Last Name", "Section", "Status", "Method", "Timestamp"]
-        rows_out = [header]
-        for rec in records:
-            ts = rec.get("timestamp", "")
-            try:
-                date_part = datetime.fromisoformat(ts).date().isoformat()
-            except Exception:
-                date_part = rec.get("date", "")
-            rows_out.append([
-                date_part,
-                rec.get("first_name", ""),
-                rec.get("last_name", ""),
-                rec.get("section_name", ""),
-                rec.get("status", ""),
-                rec.get("method", ""),
-                ts,
-            ])
-
-        ws.update(rows_out)
-        info = (
-            f"Exported {len(records)} records to "
-            f"'{worksheet_title}' in the sheet."
-        )
-        log_info(f"Google Sheets export: {info}")
-        return True, info
-    except gspread.exceptions.APIError as exc:
-        log_error(f"Google Sheets write error: {exc}")
-        return False, f"Google Sheets write error:\n{exc}"
-    except Exception as exc:
-        log_error(f"Unexpected error during Sheets export: {exc}")
-        return False, str(exc)
 
 
 def push_summary_to_sheets(spreadsheet_url: str) -> tuple[bool, str]:

@@ -70,10 +70,11 @@ def get_student_by_card_id(card_id: str) -> Optional[StudentRow]:
 
 
 def get_all_students() -> list[StudentRow]:
-    """Return all students ordered by last name, first name."""
+    """Return all students ordered by RFID card_id ascending (numerically), then name."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM students ORDER BY last_name, first_name;"
+            """SELECT * FROM students
+               ORDER BY CAST(card_id AS INTEGER) ASC, last_name, first_name;"""
         ).fetchall()
     return rows
 

@@ -34,17 +34,21 @@ _COLUMNS: list[tuple[str, str, int]] = [
 class StudentsTab(ctk.CTkFrame):
     """Students management tab — fully implemented in Phase 2."""
 
+    _PAGE_SIZE = 50  # Rows rendered per page for performance
+
     def __init__(self, parent: Any, root: Any) -> None:
         super().__init__(parent, fg_color="#1a1a2e", corner_radius=0)
         self._app = root
 
         self._all_rows: list[dict] = []       # full data from controller
         self._display_rows: list[dict] = []   # after search + sort
+        self._visible_count: int = 0          # how many rows currently rendered
 
         self._sort_key: str = "full_name"
         self._sort_asc: bool = True
         self._search_var = ctk.StringVar()
         self._search_var.trace_add("write", self._on_search_change)
+        self._search_debounce_id: Optional[str] = None
 
         self._build_ui()
         self._load()
@@ -94,6 +98,32 @@ class StudentsTab(ctk.CTkFrame):
             font=ctk.CTkFont(size=12), text_color="#6b7280",
         )
         self._count_label.pack(side="right", padx=16)
+
+        # ── Filter bar ────────────────────────────────────────────────────────
+        filter_frame = ctk.CTkFrame(self, fg_color="transparent")
+        filter_frame.pack(fill="x", padx=24, pady=(0, 6))
+
+        ctk.CTkLabel(
+            filter_frame, text="Section:", font=ctk.CTkFont(size=12),
+            text_color="#9ca3af",
+        ).pack(side="left", padx=(0, 4))
+
+        self._section_filter_var = ctk.StringVar(value="All Sections")
+        self._section_filter = ctk.CTkComboBox(
+            filter_frame, variable=self._section_filter_var,
+            values=["All Sections"], width=180, height=30,
+            font=ctk.CTkFont(size=12), state="readonly",
+            command=lambda _v: self._apply_filter(),
+        )
+        self._section_filter.pack(side="left", padx=(0, 16))
+
+        self._hide_inactive_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            filter_frame, text="Hide inactive students",
+            variable=self._hide_inactive_var,
+            font=ctk.CTkFont(size=12), height=28,
+            command=self._apply_filter,
+        ).pack(side="left")
 
         # ── Column headers ────────────────────────────────────────────────────
         self._col_hdr = ctk.CTkFrame(self, fg_color="#0f0f23", corner_radius=0)
@@ -145,21 +175,44 @@ class StudentsTab(ctk.CTkFrame):
             row["full_name"] = f"{row['last_name']}, {row['first_name']}"
 
         self._all_rows = raw
+
+        # Refresh section filter options
+        section_names = sorted({
+            s.strip()
+            for r in raw if r.get("sections")
+            for s in r["sections"].split(",")
+        })
+        self._section_filter.configure(values=["All Sections"] + section_names)
+
         self._apply_filter()
 
     def _apply_filter(self) -> None:
-        """Apply current search query + sort, then re-render."""
+        """Apply current search query + section filter + inactive filter + sort, then re-render."""
         query = self._search_var.get().strip().lower()
+        sec_filter = self._section_filter_var.get()
+        hide_inactive = self._hide_inactive_var.get()
 
+        filtered = list(self._all_rows)
+
+        # Section filter
+        if sec_filter and sec_filter != "All Sections":
+            filtered = [
+                r for r in filtered
+                if sec_filter in [s.strip() for s in r.get("sections", "").split(",")]
+            ]
+
+        # Inactive filter
+        if hide_inactive:
+            filtered = [r for r in filtered if not r.get("is_inactive")]
+
+        # Text search
         if query:
             filtered = [
-                r for r in self._all_rows
+                r for r in filtered
                 if query in r["full_name"].lower()
                 or query in r["card_id"].lower()
                 or query in r["sections"].lower()
             ]
-        else:
-            filtered = list(self._all_rows)
 
         # Sort
         filtered.sort(
@@ -181,6 +234,7 @@ class StudentsTab(ctk.CTkFrame):
     def _render_rows(self) -> None:
         for w in self._list_frame.winfo_children():
             w.destroy()
+        self._visible_count = 0
 
         if not self._display_rows:
             ctk.CTkLabel(
@@ -191,8 +245,39 @@ class StudentsTab(ctk.CTkFrame):
             ).pack(pady=40)
             return
 
-        for row_data in self._display_rows:
+        # Render first page
+        self._render_page()
+
+    def _render_page(self) -> None:
+        """Render the next batch of rows (pagination)."""
+        start = self._visible_count
+        end = min(start + self._PAGE_SIZE, len(self._display_rows))
+        for row_data in self._display_rows[start:end]:
             self._render_row(row_data)
+        self._visible_count = end
+
+        # Remove existing "Load More" button if present
+        if hasattr(self, "_load_more_btn") and self._load_more_btn is not None:
+            try:
+                self._load_more_btn.destroy()
+            except Exception:
+                pass
+            self._load_more_btn = None
+
+        # Add "Load More" button if there are more rows
+        if self._visible_count < len(self._display_rows):
+            remaining = len(self._display_rows) - self._visible_count
+            self._load_more_btn = ctk.CTkButton(
+                self._list_frame,
+                text=f"Load More ({remaining} remaining)",
+                width=200, height=36,
+                fg_color="#374151", hover_color="#4b5563",
+                font=ctk.CTkFont(size=13),
+                command=self._render_page,
+            )
+            self._load_more_btn.pack(pady=12)
+        else:
+            self._load_more_btn = None
 
     def _render_row(self, row_data: dict) -> None:
         is_inactive = row_data.get("is_inactive", False)
@@ -306,6 +391,7 @@ class StudentsTab(ctk.CTkFrame):
     def _open_attendance_dialog(self, student_id: int, full_name: str) -> None:
         dlg = ManualAttendanceDialog(self._app, student_id, full_name)
         self._app.wait_window(dlg)
+        self._load()  # Recalculate attendance percentages after manual changes
 
     def _delete_student(self, student_id: int, full_name: str) -> None:
         if not messagebox.askyesno(
@@ -328,8 +414,10 @@ class StudentsTab(ctk.CTkFrame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _on_search_change(self, *_args: object) -> None:
-        """Called whenever the search box text changes."""
-        self._apply_filter()
+        """Called whenever the search box text changes — debounced 200ms."""
+        if self._search_debounce_id is not None:
+            self.after_cancel(self._search_debounce_id)
+        self._search_debounce_id = self.after(200, self._apply_filter)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public hook

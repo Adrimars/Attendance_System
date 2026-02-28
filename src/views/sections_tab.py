@@ -171,7 +171,7 @@ class SectionsTab(ctk.CTkFrame):
         col_hdr = ctk.CTkFrame(self, fg_color="#0f0f23", corner_radius=0)
         col_hdr.pack(fill="x", padx=24)
         for col, w in [("Name", 220), ("Type", 110), ("Level", 130),
-                       ("Day", 110), ("Time", 80), ("", 160)]:
+                       ("Day", 110), ("Time", 80), ("", 240)]:
             ctk.CTkLabel(
                 col_hdr, text=col, font=ctk.CTkFont(size=12, weight="bold"),
                 text_color="#6b7280", width=w, anchor="w",
@@ -200,9 +200,16 @@ class SectionsTab(ctk.CTkFrame):
                 text_color="#d0d0e0", width=w, anchor="w",
             ).pack(side="left", padx=8, pady=8)
 
-        btn_frame = ctk.CTkFrame(row, fg_color="transparent", width=160)
+        btn_frame = ctk.CTkFrame(row, fg_color="transparent", width=240)
         btn_frame.pack(side="left", padx=4)
         btn_frame.pack_propagate(False)
+
+        ctk.CTkButton(
+            btn_frame, text="Students", width=74, height=32,
+            fg_color="#065f46", hover_color="#047857",
+            font=ctk.CTkFont(size=12),
+            command=lambda sid=s["id"], sname=s["name"]: self._show_section_students(sid, sname),
+        ).pack(side="left", padx=(0, 4))
 
         ctk.CTkButton(
             btn_frame, text="Edit", width=70, height=32,
@@ -260,6 +267,41 @@ class SectionsTab(ctk.CTkFrame):
             self._load()
         else:
             messagebox.showerror("Error", msg, parent=self._app)
+
+    def _show_section_students(self, section_id: int, section_name: str) -> None:
+        """Open a popup listing students enrolled in the given section."""
+        students = section_ctrl.get_enrolled_students(section_id)
+
+        dlg = ctk.CTkToplevel(self._app)
+        dlg.title(f"Students — {section_name}")
+        dlg.geometry("420x480")
+        dlg.transient(self._app)
+        dlg.grab_set()
+        dlg.resizable(False, True)
+
+        ctk.CTkLabel(
+            dlg, text=f"{section_name}  ({len(students)} students)",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(pady=(12, 6))
+
+        scroll = ctk.CTkScrollableFrame(dlg, fg_color="#1e1e2e")
+        scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        if not students:
+            ctk.CTkLabel(scroll, text="No students enrolled.", text_color="#9ca3af").pack(pady=20)
+        else:
+            for idx, st in enumerate(students):
+                bg = "#2a2a3c" if idx % 2 == 0 else "#1e1e2e"
+                row = ctk.CTkFrame(scroll, fg_color=bg, height=32)
+                row.pack(fill="x", pady=1)
+                name = f"{st['last_name']}, {st['first_name']}"
+                card = st["card_id"] or "—"
+                ctk.CTkLabel(row, text=name, width=240, anchor="w",
+                             font=ctk.CTkFont(size=13)).pack(side="left", padx=8)
+                ctk.CTkLabel(row, text=card, width=120, anchor="e",
+                             text_color="#9ca3af", font=ctk.CTkFont(size=12)).pack(side="right", padx=8)
+
+        ctk.CTkButton(dlg, text="Close", width=100, command=dlg.destroy).pack(pady=(4, 12))
 
     def on_tab_selected(self) -> None:
         self._load()

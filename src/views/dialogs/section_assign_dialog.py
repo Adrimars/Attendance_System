@@ -41,6 +41,7 @@ class SectionAssignDialog(ctk.CTkToplevel):
         student_id: int,
         first_name: str,
         last_name: str,
+        pre_selected: list[int] | None = None,
     ) -> None:
         super().__init__(parent)
         self.title("Assign Sections")
@@ -50,6 +51,7 @@ class SectionAssignDialog(ctk.CTkToplevel):
         self._student_id = student_id
         self._first_name = first_name
         self._last_name  = last_name
+        self._pre_selected = set(pre_selected) if pre_selected else set()
 
         self.confirmed: bool = False
         self.section_ids: list[int] = []
@@ -115,7 +117,7 @@ class SectionAssignDialog(ctk.CTkToplevel):
 
         if self._sections:
             for sec in self._sections:
-                var = ctk.BooleanVar(value=False)
+                var = ctk.BooleanVar(value=(sec["id"] in self._pre_selected))
                 self._section_vars[sec["id"]] = var
                 ctk.CTkCheckBox(
                     sec_scroll,

@@ -117,13 +117,6 @@ def log_import_event(
     )
 
 
-def log_export_event(destination: str, row_count: int) -> None:
-    """Log a completed data export (CSV or Google Sheets)."""
-    _logger.info(
-        f"EXPORT | destination='{destination}' rows={row_count}"
-    )
-
-
 def get_log_file_path() -> str:
     """Return the absolute path of today's log file."""
     return str(_log_filename)
