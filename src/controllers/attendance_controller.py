@@ -12,6 +12,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum, auto
+from pathlib import Path
 from typing import Optional
 
 import models.attendance_model as attendance_model

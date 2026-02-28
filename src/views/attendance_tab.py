@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Optional
+import tkinter as tk
 
 import customtkinter as ctk
 
@@ -129,20 +130,23 @@ class AttendanceTab(ctk.CTkFrame):
         self._feedback_lbl.pack(expand=True)
 
         # -- Hidden RFID capture entry ----------------------------------------
-        # Use a larger widget footprint to reliably capture keyboard input
-        # from USB RFID readers on all Windows systems.
-        self._rfid_entry = ctk.CTkEntry(
-            self, width=10, height=1,
-            fg_color=_BASE_BG, border_width=0, text_color=_BASE_BG,
+        # Use a raw tk.Entry (not CTkEntry) for maximum reliability with USB
+        # RFID readers. CTkEntry's internal widget layering can lose keystrokes.
+        self._rfid_entry = tk.Entry(
+            self, width=1, bg=_BASE_BG, fg=_BASE_BG,
+            insertbackground=_BASE_BG, relief="flat",
+            highlightthickness=0, bd=0,
         )
         self._rfid_entry.pack()
         self._rfid_entry.bind("<Return>", self._on_rfid_enter)
         self._rfid_entry.bind("<FocusIn>",  lambda _e: self._set_listening(True))
         self._rfid_entry.bind("<FocusOut>", self._on_rfid_focus_out)
-        # Also bind KeyPress to ensure the entry actually receives keystrokes
-        self._rfid_entry.bind("<Key>", self._on_rfid_key)
         self.bind("<Button-1>", lambda _e: self._rfid_entry.focus_set())
         self._rfid_entry.focus_set()
+
+        # Toplevel fallback: buffer keystrokes even when focus drifts
+        self._key_buffer: list[str] = []
+        self.winfo_toplevel().bind("<Key>", self._on_toplevel_key, add=True)
 
         # -- [SIMULATION] Panel (hidden by default) ---------------------------
         #DELETABLE!!!
@@ -454,18 +458,39 @@ class AttendanceTab(ctk.CTkFrame):
         """Fired when the RFID reader sends Enter after the card data."""
         card_id = self._rfid_entry.get().strip()
         self._rfid_entry.delete(0, "end")
+        self._key_buffer.clear()
         if not card_id:
+            # Check if the toplevel key buffer caught the data instead
             return
-        # ── Flexible card format guard ───────────────────────────────
         if not card_id.isdigit() or len(card_id) < 4:
             self._flash(_FLASH_RED, f"Invalid card format: '{card_id}'")
             return
         self._process_card(card_id)
 
-    def _on_rfid_key(self, event: object) -> None:
-        """Keep the entry focused and ensure keystrokes are captured."""
-        # This handler exists to confirm the entry is receiving input.
-        pass
+    def _on_toplevel_key(self, event: object) -> None:
+        """Fallback: capture keystrokes at toplevel when rfid entry loses focus."""
+        # Skip if sim panel is active or a modal is open
+        if getattr(self, "_sim_visible", False):
+            return
+        try:
+            if self.winfo_toplevel().grab_current() is not None:
+                return
+        except Exception:
+            return
+
+        char = getattr(event, "char", "")
+        keysym = getattr(event, "keysym", "")
+
+        if keysym == "Return":
+            buf = "".join(self._key_buffer).strip()
+            self._key_buffer.clear()
+            if buf and buf.isdigit() and len(buf) >= 4:
+                self._rfid_entry.delete(0, "end")
+                self._process_card(buf)
+            # Refocus the entry for next scan
+            self._rfid_entry.focus_set()
+        elif char and char.isdigit():
+            self._key_buffer.append(char)
 
     def _process_card(self, card_id: str) -> None:
         """Shared processing logic for both hardware taps and simulation."""
@@ -509,12 +534,10 @@ class AttendanceTab(ctk.CTkFrame):
     def _process_card_section_mode(self, card_id: str) -> None:
         """Section Mode: open section picker before marking present."""
         import controllers.student_controller as student_ctrl
-        from models import section_model
         from datetime import datetime as _dt
 
         student = student_ctrl.get_student_by_card_id(card_id)
         if student is None:
-            # Unknown card — fall back to normal flow (opens registration)
             self._flash(_FLASH_RED, "Unknown card -- please complete registration.")
             self._open_registration(card_id)
             return
@@ -523,31 +546,42 @@ class AttendanceTab(ctk.CTkFrame):
         fname = student["first_name"]
         lname = student["last_name"]
 
-        # Get currently enrolled section IDs
-        today_day = _english_weekday(_dt.now())
-        enrolled_today = section_model.get_sections_for_student_on_day(sid, today_day)
-        pre_selected = [s["id"] for s in enrolled_today]
+        # Get ALL enrolled section IDs (not just today's)
+        all_enrolled_ids = list(student_ctrl.get_enrolled_section_ids(sid))
 
         dlg = SectionAssignDialog(
             self._app,
             student_id=sid,
             first_name=fname,
             last_name=lname,
-            pre_selected=pre_selected,
+            pre_selected=all_enrolled_ids,
         )
         self._app.wait_window(dlg)
 
         if dlg.confirmed and dlg.section_ids:
-            marked = attendance_ctrl.mark_present_for_enrolled_sections(
-                sid, dlg.section_ids
-            )
-            if marked:
+            # Determine which selected sections are scheduled today
+            today_day = _english_weekday(_dt.now())
+            all_secs = section_ctrl.get_all_sections()
+            today_section_ids = {
+                s["id"] for s in all_secs
+                if s["day"].strip().lower() == today_day.lower()
+            }
+            # Only mark present for sections that are both selected AND today
+            mark_ids = [sid_ for sid_ in dlg.section_ids if sid_ in today_section_ids]
+
+            if mark_ids:
+                marked = attendance_ctrl.mark_present_for_enrolled_sections(
+                    sid, mark_ids
+                )
                 self._flash(
                     _FLASH_GREEN,
-                    f"{fname} {lname} — marked present in {len(marked)} section(s).",
+                    f"{fname} {lname} — sections updated, marked present in {len(marked)} today section(s).",
                 )
             else:
-                self._flash(_FLASH_GREEN, f"{fname} {lname} — sections updated.")
+                self._flash(
+                    _FLASH_GREEN,
+                    f"{fname} {lname} — sections updated (none scheduled today).",
+                )
             self._refresh_log()
         else:
             self._flash(_BASE_BG, "Section mode: skipped.")
