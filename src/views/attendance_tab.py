@@ -609,17 +609,26 @@ class AttendanceTab(ctk.CTkFrame):
         self._app.wait_window(dlg)
 
         if dlg.confirmed and dlg.section_ids:
-            marked = attendance_ctrl.mark_present_for_enrolled_sections(
-                tap_result.student_id, dlg.section_ids
-            )
-            if marked:
+            # Only mark present for sections scheduled today
+            today_day = _english_weekday(datetime.now())
+            all_secs = section_ctrl.get_all_sections()
+            today_ids = {
+                s["id"] for s in all_secs
+                if s["day"].strip().lower() == today_day.lower()
+            }
+            mark_ids = [sid for sid in dlg.section_ids if sid in today_ids]
+
+            if mark_ids:
+                marked = attendance_ctrl.mark_present_for_enrolled_sections(
+                    tap_result.student_id, mark_ids
+                )
                 self._flash(
                     _FLASH_GREEN,
                     f"{tap_result.first_name} {tap_result.last_name} — "
-                    f"sections assigned & marked present in {len(marked)} section(s).",
+                    f"sections assigned, marked present in {len(marked)} today section(s).",
                 )
             else:
-                self._flash(_FLASH_GREEN, "Sections assigned.")
+                self._flash(_FLASH_GREEN, "Sections assigned (none scheduled today).")
             self._refresh_log()
             self._refresh_today_sections()
         else:
@@ -639,15 +648,22 @@ class AttendanceTab(ctk.CTkFrame):
         self._app.wait_window(dlg)
 
         if dlg.student_id is not None:
-            # Mark the student present in every section they enrolled in right now
-            # (all enrolled sections for today, not filtered by day-of-week).
-            marked = attendance_ctrl.mark_present_for_enrolled_sections(
-                dlg.student_id, dlg.section_ids
-            )
-            if marked:
+            # Only mark present for sections scheduled today
+            today_day = _english_weekday(datetime.now())
+            all_secs = section_ctrl.get_all_sections()
+            today_ids = {
+                s["id"] for s in all_secs
+                if s["day"].strip().lower() == today_day.lower()
+            }
+            mark_ids = [sid for sid in dlg.section_ids if sid in today_ids]
+
+            if mark_ids:
+                marked = attendance_ctrl.mark_present_for_enrolled_sections(
+                    dlg.student_id, mark_ids
+                )
                 self._flash(
                     _FLASH_GREEN,
-                    f"Registered & marked present in {len(marked)} section(s).",
+                    f"Registered & marked present in {len(marked)} today section(s).",
                 )
             else:
                 self._flash(_FLASH_GREEN, "Student registered.")
