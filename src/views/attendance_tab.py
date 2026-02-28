@@ -134,7 +134,6 @@ class AttendanceTab(ctk.CTkFrame):
         self._rfid_entry = ctk.CTkEntry(
             self, width=10, height=1,
             fg_color=_BASE_BG, border_width=0, text_color=_BASE_BG,
-            cursor="arrow",
         )
         self._rfid_entry.pack()
         self._rfid_entry.bind("<Return>", self._on_rfid_enter)
