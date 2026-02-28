@@ -1,6 +1,6 @@
 # RFID Attendance System
 
-> Specifically created for IZTECH World Dance Socicty. A full-screen Windows kiosk application for tracking student attendance in a dance class using RFID card readers. Built with Python, CustomTkinter, and SQLite3.
+> Specifically created for IZTECH World Dance Society. A Windows desktop application for tracking student attendance in dance classes using USB HID RFID card readers. Built with Python, CustomTkinter, and SQLite3.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
@@ -30,13 +30,18 @@
 - **Auto-session creation** — daily attendance sessions are created per section automatically
 - **Multi-section enrollment** — one tap marks a student present in all their sections scheduled for that weekday
 - **Unknown card registration** — a registration dialog opens on first tap; student is enrolled and immediately marked present
+- **Zero-section handling** — known students with no sections get a section assignment dialog on tap
+- **Inactive student tracking** — students exceeding consecutive absence threshold are auto-flagged with visual alerts
 - **Admin panel** (Ctrl+P, PIN-protected) with three tabs:
   - **Sections** — add/edit/delete class sections with day and time
   - **Students** — search, sort, view attendance history, edit details, and reassign RFID cards
-  - **Settings** — change PIN, language, attendance threshold, Google Sheets credentials, backup, and Google Sheets import
-- **Google Sheets integration** — export attendance summaries and import student rosters from a live spreadsheet
-- **Auto-backup** — database is backed up every 4 hours automatically
-- **Localization support** — language is configurable via the settings panel
+  - **Settings** — change PIN, language, attendance threshold, inactive threshold, section mode, Google Sheets credentials, backup/restore, import, summary push, and daily reports
+- **Google Sheets integration** — import student rosters and push per-student attendance summaries
+- **Auto-backup** — database is backed up every 4 hours automatically; manual backup and restore available
+- **Localization support** — English and Turkish, switchable live from Settings
+- **Daily attendance report** — per-section breakdown with summary statistics
+- **Secure PIN** — PBKDF2-HMAC-SHA256 with salt; backward-compatible with legacy hashes
+- **RFID simulation panel** — development tool for testing without hardware (marked #DELETABLE)
 
 ---
 
@@ -89,7 +94,7 @@ From the project root:
 python src/main.py
 ```
 
-- The app launches full-screen.
+- The app launches in a 1280×800 windowed mode (resizable, minimum 900×600).
 - Press **Ctrl+P** to open the admin panel (default PIN: `1234` on first run — change it immediately in Settings).
 
 ---
@@ -145,10 +150,10 @@ Attendance_System/
 │   │   ├── settings_model.py
 │   │   └── student_model.py
 │   ├── utils/                     # Shared utilities
-│   │   ├── backup.py
-│   │   ├── localization.py
-│   │   ├── logger.py
-│   │   └── pin_utils.py
+│   │   ├── backup.py              # Auto-backup & restore
+│   │   ├── localization.py        # English/Turkish i18n
+│   │   ├── logger.py              # File logging
+│   │   └── pin_utils.py           # PBKDF2 PIN hashing
 │   └── views/                     # UI layer (CustomTkinter)
 │       ├── app.py
 │       ├── attendance_tab.py
@@ -161,6 +166,7 @@ Attendance_System/
 ├── specs/                         # Project specification documents
 ├── attendance.spec                # PyInstaller build config
 ├── requirements.txt
+├── requirements-dev.txt
 ├── LICENSE
 └── README.md
 ```

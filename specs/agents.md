@@ -4,7 +4,7 @@
 
 **Project:** RFID Dance Class Attendance System v1.1  
 **Stack:** Python 3.10+, CustomTkinter, SQLite3, gspread  
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-03-01
 
 ---
 
@@ -53,8 +53,13 @@ A Windows desktop kiosk application that automates attendance tracking for a dan
 |---------|---------|
 | Hidden text entry widget | Captures USB HID keyboard stream from RFID reader; fires on Enter key event |
 | Manual flag on attendance records | Distinguishes RFID taps from administrator overrides for audit purposes |
-| Color-flash feedback | Main screen background flashes Green/Red/Yellow for 2–3s then reverts |
+| Color-flash feedback | Main screen background flashes Green/Red/Yellow/Purple for 2–3s then reverts |
 | WAL + periodic backup | Protects against SQLite corruption on power loss |
+| Deferred `_activate()` | CTkToplevel windows defer geometry/grab/lift to `after(50)` to avoid blank render on Windows |
+| Centralised PIN hashing | `utils/pin_utils.py` is the single source of truth for all PIN hash/verify operations |
+| Locale-independent day/month | `_english_weekday()` / `_english_month()` — never use `strftime("%A")` for DB-facing logic |
+| Localization via `t()` | `utils/localization.py` provides translated strings; keys in English, values in en+tr |
+| Auto-backup scheduler | `App._schedule_auto_backup()` runs every 4 hours via `self.after()` |
 
 ### Naming Conventions
 | Item | Convention | Example |
@@ -69,8 +74,8 @@ A Windows desktop kiosk application that automates attendance tracking for a dan
 - CustomTkinter themed widgets only; no raw tkinter styling.
 - Minimum button/touch target size: 44×44 pixels (kiosk-style usability).
 - Large fonts and high-contrast colors — readable at a distance.
-- Application launches in full-screen mode and forces window focus on startup.
-- Color-coded feedback: **Green** = present, **Red** = unknown card, **Yellow** = duplicate tap.
+- Application launches in windowed mode (1280×800, min 900×600) and forces window focus on startup.
+- Color-coded feedback: **Green** = present, **Red** = unknown card, **Yellow** = duplicate tap, **Purple** = inactive student alert.
 
 ---
 
@@ -225,16 +230,25 @@ Attendance_System/
 ├── specs/
 │   ├── prd/
 │   │   └── PRD-rfid-attendance-system.md   # Primary specification
-│   ├── templates/                           # PRD, epic, story, agent templates
-│   └── agents.md                           # This file
+│   ├── templates/                         # PRD, epic, story, agent templates
+│   ├── agents.md                           # This file
+│   ├── plan.md                             # Implementation plan
+│   ├── CHANGELOG.md                        # Phase-by-phase changelog
+│   └── CURRENT_STATE.md                    # Current project state summary
 ├── src/
 │   ├── models/                             # SQLite data access (Student, Section, Session, Attendance, Settings)
-│   ├── views/                              # CustomTkinter UI (Attendance, Students, Sections, Reports, Settings tabs)
-│   ├── controllers/                        # Business logic (attendance processing, RFID handling, exports)
-│   └── main.py                             # Application entry point; launches full-screen window
+│   ├── views/                              # CustomTkinter UI (Attendance, Admin Panel, Sections, Students, Settings)
+│   │   ├── dialogs/                        # Modal dialogs (PIN, registration, section assign, manual attendance, etc.)
+│   │   └── components/                     # Reusable UI widgets
+│   ├── controllers/                        # Business logic (attendance, RFID, exports, reports)
+│   ├── utils/                              # Shared utilities (backup, localization, logging, PIN hashing)
+│   └── main.py                             # Entry point; DB init; global error handler
 ├── logs/                                   # Timestamped application log files
+├── backups/                                # Timestamped database backups
 ├── attendance.db                           # SQLite database (WAL mode)
-└── requirements.txt                        # customtkinter, gspread, google-auth
+├── attendance.spec                         # PyInstaller build config
+├── requirements.txt                        # customtkinter, gspread, google-auth
+└── requirements-dev.txt                    # Development dependencies
 ```
 
 ---

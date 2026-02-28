@@ -231,3 +231,145 @@ All tab `__init__` signatures changed from `parent: ctk.CTkFrame, root: ctk.CTk`
 - Action column width widened from 196 to 296 px to accommodate the third button.
 
 **Do NOT route manual attendance changes through `process_rfid_passive()`.** Use `set_student_attendance()` directly.
+
+---
+
+## Phase 5 — Feature Expansion & Hardening (2026-02-22 → 2026-03-01)
+
+Phase 5 adds localization, inactive student tracking, auto-backup, secure PIN upgrade, Google Sheets export, daily reports, section assignment for zero-section students, and numerous bug fixes.
+
+---
+
+### 5-A: Localization system (English + Turkish)
+
+**Added:** `utils/localization.py` — a lightweight i18n helper with a string table covering attendance tab and settings labels.
+- `t(key)` returns translated text based on the active language.
+- `set_language(code)`, `get_language()`, `load_from_settings()`.
+- Language preference persisted in the `settings` table and loaded on startup.
+- Changing language in Settings applies **live** to the attendance tab via `_apply_language()` — no restart required for the main screen.
+**Files created:** `utils/localization.py`.
+**Files changed:** `views/attendance_tab.py`, `views/settings_tab.py`, `main.py`.
+
+---
+
+### 5-B: Locale-independent weekday and month handling
+
+**Problem:** `datetime.strftime("%A")` returns OS-locale weekday names (e.g. Turkish "Pazartesi" instead of "Monday"), breaking section day matching since DB stores English day names.
+**Fix:** Added `_ENGLISH_DAYS` and `_ENGLISH_MONTHS` lookup arrays and `_english_weekday(dt)` / `_english_month(dt)` helpers in `attendance_controller.py`. All weekday/month formatting now uses these instead of `strftime`.
+**Files changed:** `controllers/attendance_controller.py`, `views/attendance_tab.py`.
+**Do NOT use strftime("%A") or strftime("%B") for any logic that touches the DB.**
+
+---
+
+### 5-C: Inactive student tracking
+
+**Added:** Students are automatically flagged `is_inactive = 1` in the DB after exceeding a configurable consecutive-absence threshold.
+- Schema migration: `schema_version` bumped to 2; `is_inactive INTEGER DEFAULT 0` column added to `students` table.
+- `refresh_inactive_status_all()` in `attendance_controller.py` recomputes inactive flags for all students.
+- Inactive students display with a **purple** flash on RFID tap and a red-tinted row in the Students tab.
+- "Hide inactive students" checkbox added to Students tab filter bar.
+- Settings tab section 9: **Inactive Students** — configurable threshold + manual refresh button.
+**Files changed:** `models/database.py`, `models/student_model.py`, `controllers/attendance_controller.py`, `views/students_tab.py`, `views/settings_tab.py`, `views/attendance_tab.py`.
+
+---
+
+### 5-D: Auto-backup utility
+
+**Added:** `utils/backup.py` — `create_backup(db_path)` creates timestamped copies to `backups/`, maximum 10 retained (oldest pruned).
+- `App._schedule_auto_backup()` runs on startup and every 4 hours via `self.after()`.
+- Settings tab backup section also supports **restore from backup** — file picker, safety backup of current DB, then overwrite and close.
+**Files created:** `utils/backup.py`.
+**Files changed:** `views/app.py`, `views/settings_tab.py`.
+
+---
+
+### 5-E: Secure PIN hashing upgrade (PBKDF2)
+
+**Added:** `utils/pin_utils.py` — centralised `hash_pin()` and `verify_pin()` using PBKDF2-HMAC-SHA256 with 260,000 iterations + 16-byte random salt.
+- New format: `salt_hex$hash_hex`.
+- `verify_pin()` detects legacy unsalted SHA-256 hashes (no `$` separator) and handles them transparently — zero migration friction.
+- `PinDialog` and `SettingsTab` now import from `pin_utils` instead of defining their own hash functions.
+**Files created:** `utils/pin_utils.py`.
+**Files changed:** `views/dialogs/pin_dialog.py`, `views/settings_tab.py`.
+**Do NOT define _hash_pin() in any other module. Always use pin_utils.**
+
+---
+
+### 5-F: Section assignment dialog (NO_SECTIONS flow)
+
+**Added:** `views/dialogs/section_assign_dialog.py` — modal dialog for assigning sections to a known student who has zero sections enrolled.
+- Triggered when `process_rfid_passive()` returns `TapResultType.NO_SECTIONS`.
+- Shows student name + scrollable section checkboxes. On confirm, enrolls the student and re-processes the tap.
+**Files created:** `views/dialogs/section_assign_dialog.py`.
+**Files changed:** `controllers/attendance_controller.py` (added `NO_SECTIONS` result type), `views/attendance_tab.py`.
+
+---
+
+### 5-G: Section mode toggle
+
+**Added:** Settings section "Section Mode" — a checkbox that toggles `section_mode` in the settings table.
+- Controls whether the attendance view shows all sections or only today's scheduled sections in the info bar.
+**Files changed:** `views/settings_tab.py`.
+
+---
+
+### 5-H: Google Sheets attendance summary push
+
+**Added:** Settings section "Google Sheets Summary" — push a per-student attendance summary (attended/total per section) to a dedicated "Attendance Summary" worksheet in a given Google Spreadsheet.
+- `push_summary_to_sheets(spreadsheet_url)` in `attendance_controller.py` — authenticates via service-account credentials, builds summary data, writes to sheet.
+- Spreadsheet URL persisted in `sheets_summary_url` setting.
+- Push runs in a background thread to avoid UI freeze; status label shows progress.
+**Files changed:** `controllers/attendance_controller.py`, `views/settings_tab.py`.
+
+---
+
+### 5-I: Daily attendance report
+
+**Added:** Settings section "Daily Report" — generates a today's-attendance report popup.
+- `get_daily_report(date_str)` in `attendance_controller.py` — returns total active students, present/absent counts, and per-section breakdown.
+- Report dialog shows summary cards (Active, Present, Absent, Rate) and a scrollable per-section table.
+- Inactive students excluded from all totals.
+**Files changed:** `controllers/attendance_controller.py`, `views/settings_tab.py`.
+
+---
+
+### 5-J: Students tab pagination reduced
+
+**Changed:** `StudentsTab._PAGE_SIZE` reduced from 50 to 20 rows per page for improved rendering performance.
+**Files changed:** `views/students_tab.py`.
+
+---
+
+### 5-K: Bug fixes (2026-03-01)
+
+| Fix | Description | Files |
+|-----|-------------|-------|
+| CTkEntry cursor param | Removed unsupported `cursor` parameter from CTkEntry constructor | `views/attendance_tab.py` |
+| RFID input handling | Fixed RFID entry processing edge cases | `views/attendance_tab.py` |
+| Sheets push | Fixed Google Sheets push to handle missing credentials and empty data gracefully | `controllers/attendance_controller.py`, `views/settings_tab.py` |
+| Enrollment attendance | Fixed: only mark present for today's scheduled sections during registration (not all enrolled sections) | `controllers/attendance_controller.py` |
+| Section mode display | Section info bar now respects section_mode setting for showing all vs. today's sections | `views/attendance_tab.py` |
+
+---
+
+### 5-L: Infrastructure additions
+
+- `requirements.txt` and `requirements-dev.txt` created with pinned dependencies.
+- `attendance.spec` PyInstaller build config added.
+- `LICENSE` (MIT) added.
+- `README.md` created with full setup/usage/build instructions.
+- `.gitignore` expanded for Python/IDE/build artifacts.
+
+---
+
+### Phase 5 Exit Criteria
+
+- [x] Language switching works live from Settings (English ↔ Turkish)
+- [x] Weekday matching is locale-independent — works on Turkish Windows
+- [x] Inactive students auto-flagged after N consecutive absences
+- [x] Auto-backup runs every 4 hours; manual backup + restore available
+- [x] PIN hashing upgraded to PBKDF2 with backward compatibility
+- [x] Students with zero sections get a section assignment dialog on tap
+- [x] Google Sheets summary push works end-to-end
+- [x] Daily report shows per-section breakdown
+- [x] Students tab loads 20 rows per page
