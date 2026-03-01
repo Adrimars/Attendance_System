@@ -4,18 +4,28 @@ manual_attendance_dialog.py — Admin manual attendance editor.
 Opened from the Students tab in the Admin Panel.
 Lets an admin view and change a student's attendance across all their enrolled
 sections for any calendar date.
+
+Features:
+- Calendar-style date picker
+- Dynamic section filtering by day of week
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import customtkinter as ctk
+from tkcalendar import Calendar
 from tkinter import messagebox
 
 import controllers.attendance_controller as attendance_ctrl
 from utils.logger import log_info
+
+_ENGLISH_DAYS = [
+    "Monday", "Tuesday", "Wednesday", "Thursday",
+    "Friday", "Saturday", "Sunday",
+]
 
 
 class ManualAttendanceDialog(ctk.CTkToplevel):
@@ -105,15 +115,15 @@ class ManualAttendanceDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=13), text_color="#9ca3af",
         ).pack(side="left", padx=(20, 6), pady=12)
 
-        self._date_entry = ctk.CTkEntry(
+        self._date_display = ctk.CTkButton(
             date_bar,
-            textvariable=self._date_var,
-            width=130, height=32,
+            text=self._date_var.get(),
+            width=140, height=32,
+            fg_color="#374151", hover_color="#4b5563",
             font=ctk.CTkFont(size=13),
-            placeholder_text="YYYY-MM-DD",
+            command=self._open_calendar,
         )
-        self._date_entry.pack(side="left", pady=12)
-        self._date_entry.bind("<Return>", lambda _e: self._refresh_rows())
+        self._date_display.pack(side="left", pady=12)
 
         ctk.CTkButton(
             date_bar, text="Today", width=70, height=32,
@@ -122,18 +132,29 @@ class ManualAttendanceDialog(ctk.CTkToplevel):
             command=self._go_today,
         ).pack(side="left", padx=8, pady=12)
 
-        ctk.CTkButton(
-            date_bar, text="Refresh ↺", width=90, height=32,
-            fg_color="#1e40af", hover_color="#1d4ed8",
-            font=ctk.CTkFont(size=12),
-            command=self._refresh_rows,
-        ).pack(side="left", padx=(0, 8), pady=12)
+        # Day-of-week indicator
+        self._day_label = ctk.CTkLabel(
+            date_bar, text="",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#93c5fd",
+        )
+        self._day_label.pack(side="left", padx=8)
 
         self._date_status = ctk.CTkLabel(
             date_bar, text="",
             font=ctk.CTkFont(size=12), text_color="#f87171",
         )
         self._date_status.pack(side="left", padx=8)
+
+        # ── Filter info bar ───────────────────────────────────────────────────
+        self._filter_bar = ctk.CTkFrame(self, fg_color="#0f0f23", corner_radius=0, height=28)
+        self._filter_bar.pack(fill="x")
+        self._filter_bar.pack_propagate(False)
+
+        self._filter_info = ctk.CTkLabel(
+            self._filter_bar, text="",
+            font=ctk.CTkFont(size=11), text_color="#fbbf24",
+        )
+        self._filter_info.pack(side="left", padx=14)
 
         # ── Column header ─────────────────────────────────────────────────────
         col_hdr = ctk.CTkFrame(self, fg_color="#0f0f23", corner_radius=0, height=32)
@@ -160,8 +181,8 @@ class ManualAttendanceDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             footer,
-            text="Changes are saved immediately.  "
-                 "Marking a section not on the selected weekday will still create a session for that date.",
+            text="Sections are filtered by day of week.  "
+                 "Changes are saved immediately.",
             font=ctk.CTkFont(size=10),
             text_color="#4b5563",
         ).pack(side="left", padx=14)
@@ -172,21 +193,88 @@ class ManualAttendanceDialog(ctk.CTkToplevel):
 
     def _go_today(self) -> None:
         self._date_var.set(date.today().isoformat())
+        self._date_display.configure(text=date.today().isoformat())
         self._refresh_rows()
 
+    def _open_calendar(self) -> None:
+        """Open a calendar popup to pick a date."""
+        cal_win = ctk.CTkToplevel(self)
+        cal_win.title("Select Date")
+        cal_win.geometry("320x320")
+        cal_win.configure(fg_color="#1a1a2e")
+        cal_win.grab_set()
+        cal_win.resizable(False, False)
+
+        # Parse current selection
+        try:
+            cur = datetime.strptime(self._date_var.get(), "%Y-%m-%d")
+        except ValueError:
+            cur = datetime.now()
+
+        cal = Calendar(
+            cal_win,
+            selectmode="day",
+            year=cur.year, month=cur.month, day=cur.day,
+            background="#1a1a2e",
+            foreground="white",
+            headersbackground="#0f0f23",
+            headersforeground="#93c5fd",
+            selectbackground="#2563eb",
+            normalbackground="#1e1e35",
+            normalforeground="white",
+            weekendbackground="#1e1e35",
+            weekendforeground="#f87171",
+            othermonthbackground="#111125",
+            othermonthforeground="#4b5563",
+            othermonthwebackground="#111125",
+            othermonthweforeground="#4b5563",
+            bordercolor="#374151",
+            date_pattern="yyyy-mm-dd",
+            font=("Segoe UI", 11),
+        )
+        cal.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+
+        def _confirm():
+            selected = cal.get_date()
+            self._date_var.set(selected)
+            self._date_display.configure(text=selected)
+            cal_win.destroy()
+            self._refresh_rows()
+
+        ctk.CTkButton(
+            cal_win, text="Select", width=100, height=34,
+            fg_color="#2563eb", hover_color="#1d4ed8",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=_confirm,
+        ).pack(pady=(0, 10))
+
+        # Centre on parent
+        cal_win.update_idletasks()
+        pw = self.winfo_width()
+        ph = self.winfo_height()
+        px = self.winfo_x()
+        py = self.winfo_y()
+        cw = cal_win.winfo_reqwidth()
+        ch = cal_win.winfo_reqheight()
+        cal_win.geometry(f"+{px + (pw - cw)//2}+{py + (ph - ch)//2}")
+
     def _refresh_rows(self) -> None:
-        """Re-query the DB and rebuild the section rows."""
+        """Re-query the DB and rebuild the section rows with dynamic day filtering."""
         date_str = self._date_var.get().strip()
 
         # Basic date validation
         try:
-            date.fromisoformat(date_str)
+            selected_date = date.fromisoformat(date_str)
             self._date_status.configure(text="")
         except ValueError:
             self._date_status.configure(
                 text=f"  ✕ Invalid date format — use YYYY-MM-DD"
             )
             return
+
+        # Determine day of week for dynamic filtering
+        weekday_name = _ENGLISH_DAYS[selected_date.weekday()]
+        self._day_label.configure(text=f"({weekday_name})")
 
         # Clear previous rows
         for w in self._rows_frame.winfo_children():
@@ -204,9 +292,26 @@ class ManualAttendanceDialog(ctk.CTkToplevel):
                 text="Student is not enrolled in any sections.",
                 font=ctk.CTkFont(size=14), text_color="#6b7280",
             ).pack(pady=30)
+            self._filter_info.configure(text="")
             return
 
-        for row in rows:
+        # Dynamic section filtering: only show sections scheduled for this day
+        day_rows = [r for r in rows if r["day"].strip().lower() == weekday_name.lower()]
+        other_rows = [r for r in rows if r["day"].strip().lower() != weekday_name.lower()]
+
+        if day_rows:
+            self._filter_info.configure(
+                text=f"Showing {len(day_rows)} section(s) scheduled for {weekday_name}. "
+                     f"({len(other_rows)} other section(s) hidden)"
+            )
+        else:
+            self._filter_info.configure(
+                text=f"No sections scheduled for {weekday_name}. Showing all {len(rows)} section(s)."
+            )
+            # Fallback: show all sections if none match the day
+            day_rows = rows
+
+        for row in day_rows:
             self._render_section_row(row, date_str)
 
     def _render_section_row(self, row: dict, date_str: str) -> None:

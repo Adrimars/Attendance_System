@@ -311,6 +311,92 @@ def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
     return (row["attended"] or 0), (row["total_sessions"] or 0)
 
 
+def get_section_attendance_on_date(section_id: int, date_str: str) -> list[dict]:
+    """
+    Return attendance data for every enrolled student in a given section on a
+    specific date.
+
+    For each enrolled student, includes their attendance status on that date
+    (Present, Absent, or None if no session/record exists).
+
+    Returns:
+        List of dicts with keys:
+            student_id, first_name, last_name, card_id, status, method, timestamp
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT st.id          AS student_id,
+                   st.first_name,
+                   st.last_name,
+                   st.card_id,
+                   a.status,
+                   a.method,
+                   a.timestamp
+            FROM   students st
+            JOIN   student_sections ss ON ss.student_id = st.id
+            LEFT JOIN sessions sess   ON sess.section_id = ss.section_id
+                                      AND sess.date = ?
+            LEFT JOIN attendance a    ON a.session_id = sess.id
+                                      AND a.student_id = st.id
+            WHERE  ss.section_id = ?
+            ORDER  BY st.last_name, st.first_name;
+            """,
+            (date_str, section_id),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_full_section_attendance(section_id: int) -> list[dict]:
+    """
+    Return comprehensive attendance data for all students enrolled in a section
+    across ALL dates/sessions ever recorded for that section.
+
+    Returns:
+        List of dicts with keys:
+            student_id, first_name, last_name, card_id,
+            session_date, status, method, timestamp
+        Ordered by student name, then session date descending.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT st.id          AS student_id,
+                   st.first_name,
+                   st.last_name,
+                   st.card_id,
+                   sess.date      AS session_date,
+                   a.status,
+                   a.method,
+                   a.timestamp
+            FROM   students st
+            JOIN   student_sections ss ON ss.student_id = st.id
+            LEFT JOIN sessions sess   ON sess.section_id = ss.section_id
+            LEFT JOIN attendance a    ON a.session_id = sess.id
+                                      AND a.student_id = st.id
+            WHERE  ss.section_id = ?
+            ORDER  BY st.last_name, st.first_name, sess.date DESC;
+            """,
+            (section_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_section_session_dates(section_id: int) -> list[str]:
+    """Return all distinct session dates for a given section, newest first."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT date
+            FROM   sessions
+            WHERE  section_id = ?
+            ORDER  BY date DESC;
+            """,
+            (section_id,),
+        ).fetchall()
+    return [r["date"] for r in rows]
+
+
 def get_consecutive_recent_absences(student_id: int) -> int:
     """
     Count how many of the most-recent sessions (across all enrolled sections)

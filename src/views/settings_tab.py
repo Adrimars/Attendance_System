@@ -92,7 +92,6 @@ class SettingsTab(ctk.CTkFrame):
         self._build_import_section(outer)
         self._build_sheets_summary_section(outer)
         self._build_inactive_section(outer)
-        self._build_daily_report_section(outer)
 
     # ── 1. PIN change ─────────────────────────────────────────────────────────
 
@@ -724,25 +723,7 @@ class SettingsTab(ctk.CTkFrame):
             command=self._refresh_inactive_status,
         ).pack(side="left")
 
-    # ── 10. Daily Report ──────────────────────────────────────────────
-
-    def _build_daily_report_section(self, outer: ctk.CTkScrollableFrame) -> None:
-        frame = _section(outer, "Daily Report")
-
-        ctk.CTkLabel(
-            frame,
-            text="Generate a summary of today\'s attendance.\n"
-                 "Inactive students are excluded from all totals.",
-            font=ctk.CTkFont(size=12), text_color="#6b7280",
-            justify="left",
-        ).pack(padx=16, pady=(0, 6), anchor="w")
-
-        ctk.CTkButton(
-            frame, text="Show Daily Report", width=200, height=42,
-            fg_color="#0f4c75", hover_color="#1b6ca8",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._show_daily_report,
-        ).pack(padx=16, pady=(0, 14), anchor="w")
+    # ── 10. (Removed — Daily Report is now in the Reports tab) ──────
 
     # ─────────────────────────────────────────────────────────────────────────────
     # Inactive handlers
@@ -787,112 +768,6 @@ class SettingsTab(ctk.CTkFrame):
             log_error(f"_refresh_inactive_status: {exc}")
             messagebox.showerror("Error", str(exc), parent=self._app)
         self.after(5000, lambda: self._inactive_status.configure(text=""))
-
-    def _show_daily_report(self) -> None:
-        """Build and display a today\'s attendance report in a popup dialog."""
-        from datetime import date as _date
-        today = _date.today().isoformat()
-        try:
-            report = attendance_ctrl.get_daily_report(today)
-        except Exception as exc:
-            log_error(f"_show_daily_report: {exc}")
-            messagebox.showerror("Error", f"Could not generate report:\n{exc}", parent=self._app)
-            return
-
-        dlg = ctk.CTkToplevel(self._app)
-        dlg.title(f"Daily Report — {today}")
-        dlg.geometry("560x520")
-        dlg.configure(fg_color="#1a1a2e")
-        dlg.grab_set()
-        dlg.resizable(False, False)
-
-        # Title
-        ctk.CTkLabel(
-            dlg, text=f"Daily Attendance Report",
-            font=ctk.CTkFont(size=20, weight="bold"), text_color="#e0e0e0",
-        ).pack(padx=24, pady=(20, 4), anchor="w")
-        ctk.CTkLabel(
-            dlg, text=today,
-            font=ctk.CTkFont(size=13), text_color="#6b7280",
-        ).pack(padx=24, pady=(0, 16), anchor="w")
-
-        # Summary card
-        summary_frame = ctk.CTkFrame(dlg, fg_color="#0f0f23", corner_radius=10)
-        summary_frame.pack(fill="x", padx=24, pady=(0, 14))
-
-        total   = report["total_active"]
-        present = report["present_count"]
-        absent  = report["absent_count"]
-        pct     = f"{present / total * 100:.0f}%" if total > 0 else "N/A"
-
-        stats = [
-            ("Active Students", str(total),   "#93c5fd"),
-            ("Present",         str(present), "#4ade80"),
-            ("Absent",          str(absent),  "#f87171"),
-            ("Attendance Rate", pct,           "#fbbf24"),
-        ]
-        stat_row = ctk.CTkFrame(summary_frame, fg_color="transparent")
-        stat_row.pack(fill="x", padx=16, pady=14)
-        for label, value, color in stats:
-            cell = ctk.CTkFrame(stat_row, fg_color="transparent")
-            cell.pack(side="left", expand=True)
-            ctk.CTkLabel(
-                cell, text=value,
-                font=ctk.CTkFont(size=28, weight="bold"), text_color=color,
-            ).pack()
-            ctk.CTkLabel(
-                cell, text=label,
-                font=ctk.CTkFont(size=11), text_color="#6b7280",
-            ).pack()
-
-        # Per-section breakdown
-        ctk.CTkLabel(
-            dlg, text="Per-Section Breakdown",
-            font=ctk.CTkFont(size=14, weight="bold"), text_color="#e0e0e0",
-        ).pack(padx=24, pady=(0, 8), anchor="w")
-
-        sec_scroll = ctk.CTkScrollableFrame(dlg, fg_color="#111125", corner_radius=8)
-        sec_scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
-
-        sections = report["sections"]
-        if not sections:
-            ctk.CTkLabel(
-                sec_scroll,
-                text="No sections scheduled today.",
-                font=ctk.CTkFont(size=13), text_color="#6b7280",
-            ).pack(pady=20)
-        else:
-            # Header
-            hdr = ctk.CTkFrame(sec_scroll, fg_color="transparent")
-            hdr.pack(fill="x", padx=4, pady=(4, 2))
-            for text, w in [("Section", 240), ("Present", 90), ("Absent", 90), ("Total", 90), ("Rate", 80)]:
-                ctk.CTkLabel(
-                    hdr, text=text, width=w, anchor="w",
-                    font=ctk.CTkFont(size=11, weight="bold"), text_color="#6b7280",
-                ).pack(side="left", padx=4)
-            for sec in sections:
-                sec_total   = sec["total"]
-                sec_present = sec["present"]
-                sec_pct     = f"{sec_present / sec_total * 100:.0f}%" if sec_total > 0 else "N/A"
-                fr = ctk.CTkFrame(sec_scroll, fg_color="#1e1e35", corner_radius=6)
-                fr.pack(fill="x", pady=2, padx=4)
-                for text, w, color in [
-                    (sec["name"],      240, "#e0e0e0"),
-                    (str(sec_present), 90,  "#4ade80"),
-                    (str(sec["absent"]), 90, "#f87171"),
-                    (str(sec_total),   90,  "#93c5fd"),
-                    (sec_pct,          80,  "#fbbf24"),
-                ]:
-                    ctk.CTkLabel(
-                        fr, text=text, width=w, anchor="w",
-                        font=ctk.CTkFont(size=13), text_color=color,
-                    ).pack(side="left", padx=(8 if text == sec["name"] else 4), pady=6)
-
-        ctk.CTkButton(
-            dlg, text="Close", width=100, height=36,
-            fg_color="#374151", hover_color="#4b5563",
-            command=dlg.destroy,
-        ).pack(pady=(0, 16))
 
     def on_tab_selected(self) -> None:
         pass

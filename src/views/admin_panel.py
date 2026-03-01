@@ -18,6 +18,7 @@ import customtkinter as ctk
 from views.sections_tab import SectionsTab
 from views.students_tab import StudentsTab
 from views.settings_tab import SettingsTab
+from views.report_tab import ReportTab
 from utils.logger import log_info
 
 
@@ -107,7 +108,7 @@ class AdminPanel(ctk.CTkToplevel):
         )
         self._tabview.pack(fill="both", expand=True)
 
-        for tab_name in ("Sections", "Students", "Settings"):
+        for tab_name in ("Sections", "Students", "Reports", "Settings"):
             self._tabview.add(tab_name)
 
         # Mount management tabs — each takes (parent_frame, root=toplevel_root)
@@ -122,6 +123,11 @@ class AdminPanel(ctk.CTkToplevel):
             self._tabview.tab("Students"), root=self
         )
         self._students_tab.pack(fill="both", expand=True)
+
+        self._report_tab = ReportTab(
+            self._tabview.tab("Reports"), root=self
+        )
+        self._report_tab.pack(fill="both", expand=True)
 
         self._settings_tab = SettingsTab(
             self._tabview.tab("Settings"), root=self
@@ -143,6 +149,7 @@ class AdminPanel(ctk.CTkToplevel):
         tab_map = {
             "Sections": self._sections_tab,
             "Students": self._students_tab,
+            "Reports":  self._report_tab,
             "Settings": self._settings_tab,
         }
         tab = tab_map.get(tab_name)
