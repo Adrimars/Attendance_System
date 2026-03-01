@@ -16,6 +16,32 @@ Usage:
 
 from __future__ import annotations
 
+import unicodedata
+
+
+# ---------------------------------------------------------------------------
+# Turkish-aware lowercase helper
+# ---------------------------------------------------------------------------
+
+# Python's str.lower() does not handle Turkish İ and I correctly:
+#   'İ'.lower() → 'i\u0307'  (i + combining dot above) instead of 'i'
+#   'I'.lower() → 'i'        instead of Turkish 'ı' (dotless i)
+# This causes search/sort/comparison to fail for Turkish names.
+
+_TR_UPPER_TO_LOWER = str.maketrans("İIĞÜŞÖÇ", "iığüşöç")
+
+
+def turkish_lower(text: str) -> str:
+    """Return a Turkish-aware lowercase version of *text*.
+
+    Handles İ→i, I→ı, and other Turkish-specific characters correctly,
+    then falls back to ``str.lower()`` for everything else.
+    After lowering, normalise to NFC to collapse any leftover combining
+    marks (e.g. the stray \\u0307 from İ).
+    """
+    result = text.translate(_TR_UPPER_TO_LOWER).lower()
+    return unicodedata.normalize("NFC", result)
+
 # ---------------------------------------------------------------------------
 # String table
 # ---------------------------------------------------------------------------

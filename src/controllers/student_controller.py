@@ -18,6 +18,7 @@ import models.section_model as section_model
 import models.attendance_model as attendance_model
 from models.database import transaction
 from utils.logger import log_info, log_error, log_warning
+from utils.localization import turkish_lower
 
 
 @dataclass
@@ -275,7 +276,7 @@ def sort_students(
     """
     def _key(s: object) -> str:
         val = s[sort_by] if s[sort_by] is not None else ""  # type: ignore[index]
-        return str(val).lower()
+        return turkish_lower(str(val))
 
     return sorted(students, key=_key, reverse=not ascending)
 

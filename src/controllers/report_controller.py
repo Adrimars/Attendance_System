@@ -18,6 +18,66 @@ from typing import Optional
 import models.attendance_model as attendance_model
 import models.section_model as section_model
 from utils.logger import log_info, log_error
+from utils.localization import turkish_lower
+
+
+# ── Unicode font registration for Turkish character support ───────────────────
+_FONT_REGISTERED = False
+
+
+def _register_unicode_fonts():
+    """Register a TTF font that supports Turkish characters (ğüşıöçİĞÜŞÖÇ).
+
+    Tries Windows Arial first, then DejaVuSans as fallback.
+    """
+    global _FONT_REGISTERED
+    if _FONT_REGISTERED:
+        return
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        # Try Windows Arial first
+        arial_path = Path("C:/Windows/Fonts/arial.ttf")
+        arial_bold_path = Path("C:/Windows/Fonts/arialbd.ttf")
+        if arial_path.exists():
+            pdfmetrics.registerFont(TTFont("UniFont", str(arial_path)))
+            if arial_bold_path.exists():
+                pdfmetrics.registerFont(TTFont("UniFont-Bold", str(arial_bold_path)))
+            else:
+                pdfmetrics.registerFont(TTFont("UniFont-Bold", str(arial_path)))
+            pdfmetrics.registerFontFamily(
+                "UniFont", normal="UniFont", bold="UniFont-Bold",
+            )
+            _FONT_REGISTERED = True
+            log_info("Registered Arial as UniFont for Turkish character support.")
+            return
+
+        # Fallback: try DejaVuSans (often available on many systems)
+        for search_dir in [
+            Path("C:/Windows/Fonts"),
+            Path("/usr/share/fonts"),
+            Path("/usr/local/share/fonts"),
+        ]:
+            dejavu = search_dir / "DejaVuSans.ttf"
+            dejavu_bold = search_dir / "DejaVuSans-Bold.ttf"
+            if dejavu.exists():
+                pdfmetrics.registerFont(TTFont("UniFont", str(dejavu)))
+                if dejavu_bold.exists():
+                    pdfmetrics.registerFont(TTFont("UniFont-Bold", str(dejavu_bold)))
+                else:
+                    pdfmetrics.registerFont(TTFont("UniFont-Bold", str(dejavu)))
+                pdfmetrics.registerFontFamily(
+                    "UniFont", normal="UniFont", bold="UniFont-Bold",
+                )
+                _FONT_REGISTERED = True
+                log_info("Registered DejaVuSans as UniFont for Turkish character support.")
+                return
+
+        log_error("No suitable TTF font found for Turkish character support. "
+                  "PDF may not render Turkish characters correctly.")
+    except Exception as exc:
+        log_error(f"Failed to register Unicode font: {exc}")
 
 
 # ── Locale-independent weekday helper (shared with attendance_controller) ─────
@@ -138,8 +198,8 @@ def get_full_section_report(section_id: int) -> dict:
         stu["attendance_pct"] = pct
         students.append(stu)
 
-    # Sort by last name, first name
-    students.sort(key=lambda s: (s["last_name"].lower(), s["first_name"].lower()))
+    # Sort by first name, last name
+    students.sort(key=lambda s: (turkish_lower(s["first_name"]), turkish_lower(s["last_name"])))
 
     return {
         "section_name": sec["name"],
@@ -174,6 +234,10 @@ def generate_daily_section_pdf(report: dict, output_path: str) -> str:
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
+    _register_unicode_fonts()
+    font_name = "UniFont" if _FONT_REGISTERED else "Helvetica"
+    font_name_bold = "UniFont-Bold" if _FONT_REGISTERED else "Helvetica-Bold"
+
     doc = SimpleDocTemplate(output_path, pagesize=A4,
                             leftMargin=20*mm, rightMargin=20*mm,
                             topMargin=20*mm, bottomMargin=20*mm)
@@ -181,15 +245,15 @@ def generate_daily_section_pdf(report: dict, output_path: str) -> str:
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "ReportTitle", parent=styles["Title"],
-        fontSize=18, spaceAfter=6,
+        fontName=font_name_bold, fontSize=18, spaceAfter=6,
     )
     subtitle_style = ParagraphStyle(
         "ReportSubtitle", parent=styles["Normal"],
-        fontSize=11, textColor=colors.grey, spaceAfter=12,
+        fontName=font_name, fontSize=11, textColor=colors.grey, spaceAfter=12,
     )
     heading_style = ParagraphStyle(
         "ReportHeading", parent=styles["Heading2"],
-        fontSize=13, spaceAfter=8,
+        fontName=font_name_bold, fontSize=13, spaceAfter=8,
     )
 
     elements = []
@@ -219,7 +283,8 @@ def generate_daily_section_pdf(report: dict, output_path: str) -> str:
     summary_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), font_name_bold),
+        ("FONTNAME", (0, 1), (-1, -1), font_name),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
@@ -231,12 +296,12 @@ def generate_daily_section_pdf(report: dict, output_path: str) -> str:
     # Student list
     elements.append(Paragraph("Student Details", heading_style))
 
-    table_data = [["#", "Last Name", "First Name", "Card ID", "Status"]]
+    table_data = [["#", "First Name", "Last Name", "Card ID", "Status"]]
     for i, stu in enumerate(report["students"], 1):
         table_data.append([
             str(i),
-            stu["last_name"],
             stu["first_name"],
+            stu["last_name"],
             stu["card_id"] or "—",
             stu["status"],
         ])
@@ -246,7 +311,8 @@ def generate_daily_section_pdf(report: dict, output_path: str) -> str:
     student_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f4c75")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), font_name_bold),
+        ("FONTNAME", (0, 1), (-1, -1), font_name),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("ALIGN", (4, 0), (4, -1), "CENTER"),
@@ -273,7 +339,7 @@ def generate_daily_section_pdf(report: dict, output_path: str) -> str:
     elements.append(Paragraph(
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         ParagraphStyle("Footer", parent=styles["Normal"],
-                       fontSize=8, textColor=colors.grey),
+                       fontName=font_name, fontSize=8, textColor=colors.grey),
     ))
 
     doc.build(elements)
@@ -305,6 +371,10 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
+    _register_unicode_fonts()
+    font_name = "UniFont" if _FONT_REGISTERED else "Helvetica"
+    font_name_bold = "UniFont-Bold" if _FONT_REGISTERED else "Helvetica-Bold"
+
     # Use landscape for the potentially wide date-column table
     doc = SimpleDocTemplate(output_path, pagesize=landscape(A4),
                             leftMargin=15*mm, rightMargin=15*mm,
@@ -313,19 +383,19 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "FullReportTitle", parent=styles["Title"],
-        fontSize=18, spaceAfter=6,
+        fontName=font_name_bold, fontSize=18, spaceAfter=6,
     )
     subtitle_style = ParagraphStyle(
         "FullReportSubtitle", parent=styles["Normal"],
-        fontSize=11, textColor=colors.grey, spaceAfter=12,
+        fontName=font_name, fontSize=11, textColor=colors.grey, spaceAfter=12,
     )
     heading_style = ParagraphStyle(
         "FullReportHeading", parent=styles["Heading2"],
-        fontSize=13, spaceAfter=8,
+        fontName=font_name_bold, fontSize=13, spaceAfter=8,
     )
     cell_style = ParagraphStyle(
         "CellWrap", parent=styles["Normal"],
-        fontSize=7, leading=9,
+        fontName=font_name, fontSize=7, leading=9,
     )
 
     elements = []
@@ -344,12 +414,12 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
     # ── Summary table (one row per student) ───────────────────────────────
     elements.append(Paragraph("Student Summary", heading_style))
 
-    summary_data = [["#", "Last Name", "First Name", "Present", "Absent", "Sessions", "Rate"]]
+    summary_data = [["#", "First Name", "Last Name", "Present", "Absent", "Sessions", "Rate"]]
     for i, stu in enumerate(report["students"], 1):
         summary_data.append([
             str(i),
-            stu["last_name"],
             stu["first_name"],
+            stu["last_name"],
             str(stu["total_present"]),
             str(stu["total_absent"]),
             str(stu["total_sessions"]),
@@ -361,7 +431,8 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
     summary_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), font_name_bold),
+        ("FONTNAME", (0, 1), (-1, -1), font_name),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("ALIGN", (3, 0), (-1, -1), "CENTER"),
@@ -423,7 +494,7 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
             grid_data = [header]
 
             for stu in report["students"]:
-                row = [Paragraph(f"{stu['last_name']}, {stu['first_name']}", cell_style)]
+                row = [Paragraph(f"{stu['first_name']} {stu['last_name']}", cell_style)]
                 for d in date_chunk:
                     status = stu["records"].get(d)
                     if status == "Present":
@@ -442,7 +513,8 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
             grid_style = [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f4c75")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 0), (-1, 0), font_name_bold),
+                ("FONTNAME", (0, 1), (-1, -1), font_name),
                 ("FONTSIZE", (0, 0), (-1, 0), 7),
                 ("FONTSIZE", (0, 1), (-1, -1), 8),
                 ("ALIGN", (1, 0), (-1, -1), "CENTER"),
@@ -476,7 +548,7 @@ def generate_full_section_pdf(report: dict, output_path: str) -> str:
     elements.append(Paragraph(
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         ParagraphStyle("FullFooter", parent=styles["Normal"],
-                       fontSize=8, textColor=colors.grey),
+                       fontName=font_name, fontSize=8, textColor=colors.grey),
     ))
 
     doc.build(elements)

@@ -294,7 +294,7 @@ class SectionsTab(ctk.CTkFrame):
                 bg = "#2a2a3c" if idx % 2 == 0 else "#1e1e2e"
                 row = ctk.CTkFrame(scroll, fg_color=bg, height=32)
                 row.pack(fill="x", pady=1)
-                name = f"{st['last_name']}, {st['first_name']}"
+                name = f"{st['first_name']} {st['last_name']}"
                 card = st["card_id"] or "—"
                 ctk.CTkLabel(row, text=name, width=240, anchor="w",
                              font=ctk.CTkFont(size=13)).pack(side="left", padx=8)

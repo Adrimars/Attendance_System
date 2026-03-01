@@ -265,7 +265,7 @@ class ImportPreviewDialog(ctk.CTkToplevel):
             item = ctk.CTkFrame(self._student_list, fg_color="#1e1e35", corner_radius=6)
             item.pack(fill="x", pady=2, padx=4)
 
-            name_str = f"{row.last_name}, {row.first_name}"
+            name_str = f"{row.first_name} {row.last_name}"
             ctk.CTkLabel(
                 item, text=name_str,
                 font=ctk.CTkFont(size=12), text_color="#e0e0e0",

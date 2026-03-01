@@ -20,6 +20,7 @@ import controllers.student_controller as student_ctrl
 from views.dialogs.student_edit_dialog import StudentEditDialog
 from views.dialogs.manual_attendance_dialog import ManualAttendanceDialog
 from utils.logger import log_info, log_warning
+from utils.localization import turkish_lower
 
 
 # Column definitions: (header label, dict key, display width)
@@ -172,7 +173,7 @@ class StudentsTab(ctk.CTkFrame):
 
         # Add a combined 'full_name' key for sorting/display
         for row in raw:
-            row["full_name"] = f"{row['last_name']}, {row['first_name']}"
+            row["full_name"] = f"{row['first_name']} {row['last_name']}"
 
         self._all_rows = raw
 
@@ -188,7 +189,7 @@ class StudentsTab(ctk.CTkFrame):
 
     def _apply_filter(self) -> None:
         """Apply current search query + section filter + inactive filter + sort, then re-render."""
-        query = self._search_var.get().strip().lower()
+        query = turkish_lower(self._search_var.get().strip())
         sec_filter = self._section_filter_var.get()
         hide_inactive = self._hide_inactive_var.get()
 
@@ -209,14 +210,14 @@ class StudentsTab(ctk.CTkFrame):
         if query:
             filtered = [
                 r for r in filtered
-                if query in r["full_name"].lower()
-                or query in r["card_id"].lower()
-                or query in r["sections"].lower()
+                if query in turkish_lower(r["full_name"])
+                or query in turkish_lower(r["card_id"])
+                or query in turkish_lower(r["sections"])
             ]
 
         # Sort
         filtered.sort(
-            key=lambda r: str(r.get(self._sort_key, "")).lower(),
+            key=lambda r: turkish_lower(str(r.get(self._sort_key, ""))),
             reverse=not self._sort_asc,
         )
 

@@ -115,7 +115,7 @@ class SessionSummaryDialog(ctk.CTkToplevel):
 
                 ctk.CTkLabel(
                     row_frame,
-                    text=f"{abs_student.last_name}, {abs_student.first_name}",
+                    text=f"{abs_student.first_name} {abs_student.last_name}",
                     font=ctk.CTkFont(size=14),
                     text_color="#f0f0f0",
                     anchor="w",

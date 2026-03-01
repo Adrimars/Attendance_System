@@ -328,7 +328,7 @@ class ReportTab(ctk.CTkFrame):
         # ── Column header ─────────────────────────────────────────────────────
         col_hdr = ctk.CTkFrame(self._result_frame, fg_color=_CARD_BG, corner_radius=0)
         col_hdr.pack(fill="x", padx=8, pady=(0, 2))
-        for txt, w in [("#", 40), ("Last Name", 160), ("First Name", 160), ("Card ID", 140), ("Status", 100)]:
+        for txt, w in [("#", 40), ("First Name", 160), ("Last Name", 160), ("Card ID", 140), ("Status", 100)]:
             ctk.CTkLabel(
                 col_hdr, text=txt, width=w, anchor="w",
                 font=ctk.CTkFont(size=12, weight="bold"), text_color="#6b7280",
@@ -352,9 +352,9 @@ class ReportTab(ctk.CTkFrame):
 
             ctk.CTkLabel(row, text=str(i), width=40, anchor="w",
                          font=ctk.CTkFont(size=12), text_color="#9ca3af").pack(side="left", padx=6, pady=6)
-            ctk.CTkLabel(row, text=stu["last_name"], width=160, anchor="w",
-                         font=ctk.CTkFont(size=13), text_color="#e0e0e0").pack(side="left", padx=6)
             ctk.CTkLabel(row, text=stu["first_name"], width=160, anchor="w",
+                         font=ctk.CTkFont(size=13), text_color="#e0e0e0").pack(side="left", padx=6)
+            ctk.CTkLabel(row, text=stu["last_name"], width=160, anchor="w",
                          font=ctk.CTkFont(size=13), text_color="#e0e0e0").pack(side="left", padx=6)
             ctk.CTkLabel(row, text=stu["card_id"] or "—", width=140, anchor="w",
                          font=ctk.CTkFont(size=12), text_color="#6b7280").pack(side="left", padx=6)
@@ -417,7 +417,7 @@ class ReportTab(ctk.CTkFrame):
 
         ctk.CTkLabel(
             hdr,
-            text=f"{stu['last_name']}, {stu['first_name']}",
+            text=f"{stu['first_name']} {stu['last_name']}",
             font=ctk.CTkFont(size=14, weight="bold"), text_color="#e0e0e0",
         ).pack(side="left")
 

@@ -30,6 +30,7 @@ import models.student_model as student_model
 import models.settings_model as settings_model
 from models.database import transaction
 from utils.logger import log_info, log_error, log_warning
+from utils.localization import turkish_lower
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -259,7 +260,7 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
     # ── Pre-fetch existing data ONCE (C2) ──────────────────────────────────────
     existing_all = student_model.get_all_students()
     known_names: set[tuple[str, str]] = {
-        (s["first_name"].lower(), s["last_name"].lower())
+        (turkish_lower(s["first_name"]), turkish_lower(s["last_name"]))
         for s in existing_all
     }
     known_cards: set[str] = {
@@ -276,7 +277,7 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
     try:
         with transaction() as conn:
             for row in to_import:
-                name_key = (row.first_name.lower(), row.last_name.lower())
+                name_key = (turkish_lower(row.first_name), turkish_lower(row.last_name))
 
                 if name_key in known_names:
                     log_warning(

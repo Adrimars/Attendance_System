@@ -278,7 +278,7 @@ class AttendanceTab(ctk.CTkFrame):
 
         ctk.CTkLabel(
             row,
-            text=f"{rec['last_name']}, {rec['first_name']}",
+            text=f"{rec['first_name']} {rec['last_name']}",
             font=ctk.CTkFont(size=14), text_color="#e0e0e0",
             width=280, anchor="w",
         ).pack(side="left", padx=8, pady=6)
