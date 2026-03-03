@@ -11,6 +11,20 @@ from utils.logger import log_debug
 
 AttendanceRow = sqlite3.Row
 
+# ── Low-attendance session filter ─────────────────────────────────────────────
+# Sessions where fewer than 10 % of enrolled students attended are treated as
+# accidental / phantom sessions and excluded from reports and aggregate counts.
+_LOW_ATTENDANCE_SUBQUERY = """
+    SELECT _s.id
+    FROM   sessions          _s
+    JOIN   student_sections  _ss ON _ss.section_id = _s.section_id
+    LEFT JOIN attendance     _a  ON _a.session_id  = _s.id
+                                AND _a.status      = 'Present'
+    GROUP  BY _s.id
+    HAVING CAST(COUNT(DISTINCT _a.student_id) AS REAL)
+           < 0.10 * COUNT(DISTINCT _ss.student_id)
+"""
+
 
 def mark_present(
     session_id: int,
@@ -281,7 +295,7 @@ def get_total_attendance_per_student() -> list[dict]:
     """
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT s.id,
                    s.first_name,
                    s.last_name,
@@ -293,6 +307,7 @@ def get_total_attendance_per_student() -> list[dict]:
             FROM   students         s
             LEFT JOIN student_sections ss   ON ss.student_id   = s.id
             LEFT JOIN sessions         sess ON sess.section_id = ss.section_id
+                                           AND sess.id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
             LEFT JOIN attendance       a    ON a.student_id    = s.id
                                            AND a.session_id    = sess.id
             GROUP  BY s.id
@@ -333,7 +348,7 @@ def get_per_section_attendance_per_student() -> list[dict]:
     """
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT s.id             AS student_id,
                    s.first_name,
                    s.last_name,
@@ -349,6 +364,7 @@ def get_per_section_attendance_per_student() -> list[dict]:
             JOIN   student_sections   ss   ON ss.student_id   = s.id
             JOIN   sections           sec  ON sec.id          = ss.section_id
             LEFT JOIN sessions        sess ON sess.section_id = sec.id
+                                          AND sess.id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
             LEFT JOIN attendance      a    ON a.student_id    = s.id
                                           AND a.session_id    = sess.id
             GROUP  BY s.id, sec.id
@@ -385,7 +401,7 @@ def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
     """
     with get_connection() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(DISTINCT CASE WHEN a.status = 'Present'
                       THEN ss.section_id || '|' || sess.date END) AS attended,
@@ -393,6 +409,7 @@ def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
                       THEN ss.section_id || '|' || sess.date END) AS total_sessions
             FROM   student_sections ss
             LEFT JOIN sessions     sess ON sess.section_id = ss.section_id
+                                       AND sess.id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
             LEFT JOIN attendance   a    ON a.student_id    = ?
                                        AND a.session_id    = sess.id
             WHERE  ss.student_id = ?;
@@ -468,7 +485,7 @@ def get_full_section_attendance(section_id: int) -> list[dict]:
     """
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT st.id          AS student_id,
                    st.first_name,
                    st.last_name,
@@ -480,6 +497,7 @@ def get_full_section_attendance(section_id: int) -> list[dict]:
             FROM   students st
             JOIN   student_sections ss ON ss.student_id = st.id
             LEFT JOIN sessions sess   ON sess.section_id = ss.section_id
+                                      AND sess.id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
             LEFT JOIN attendance a    ON a.session_id = sess.id
                                       AND a.student_id = st.id
             WHERE  ss.section_id = ?
@@ -501,13 +519,18 @@ def get_full_section_attendance(section_id: int) -> list[dict]:
 
 
 def get_section_session_dates(section_id: int) -> list[str]:
-    """Return all distinct session dates for a given section, newest first."""
+    """Return all distinct session dates for a given section, newest first.
+
+    Sessions where fewer than 10 % of enrolled students were present are
+    excluded (treated as accidental / phantom sessions).
+    """
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT DISTINCT date
             FROM   sessions
             WHERE  section_id = ?
+              AND  id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
             ORDER  BY date DESC;
             """,
             (section_id,),
@@ -530,13 +553,14 @@ def get_consecutive_recent_absences(student_id: int) -> int:
     """
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT sess.section_id,
                    sess.date,
                    COALESCE(a.status, 'Absent') AS status,
                    a.timestamp
             FROM   student_sections ss
             JOIN   sessions         sess ON sess.section_id = ss.section_id
+                                        AND sess.id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
             LEFT JOIN attendance    a    ON a.session_id    = sess.id
                                         AND a.student_id    = ss.student_id
             WHERE  ss.student_id = ?
