@@ -439,8 +439,14 @@ class AttendanceTab(ctk.CTkFrame):
         if getattr(self, "_sim_visible", False):
             return  # sim panel is handling focus
         try:
+            top = self.winfo_toplevel()
+            # Don't steal focus when the window is minimised / iconified —
+            # calling focus_set() on a widget inside an iconic window forces
+            # the window to de-iconify, which breaks the system minimize button.
+            if top.state() == "iconic":
+                return
             # grab_current() is non-None when a modal dialog (AdminPanel, etc.) is open
-            if self.winfo_toplevel().grab_current() is not None:
+            if top.grab_current() is not None:
                 self.after(300, self._try_refocus)  # wait and retry
                 return
             self._rfid_entry.focus_set()

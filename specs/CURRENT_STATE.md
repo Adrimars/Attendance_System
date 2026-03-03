@@ -1,6 +1,6 @@
 # Project Current State — RFID Dance Class Attendance System
-**Last updated:** 2026-03-01 (Phase 5)
-**Status:** Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 complete. 0 Pylance errors. All imports verified.
+**Last updated:** 2026-03-02 (Phase 5 complete; Phase 6+ planned)
+**Status:** Phase 1-5 complete. Roadmap for Phase 6-8 in `specs/plan.md`.
 
 ---
 
@@ -63,7 +63,7 @@ src/
       session_summary_dialog.py    — end-of-session absent summary (kept for legacy use)
       section_assign_dialog.py     — assign sections to a known student with zero enrolments
 specs/
-  plan.md                          — full implementation plan (Phases 1-5 documented)
+  plan.md                          — implementation plan (Phase 6-8 roadmap)
   agents.md                        — coding conventions and rules
   CURRENT_STATE.md                 — this file
   CHANGELOG.md                     — what changed in each phase (do not re-do these)

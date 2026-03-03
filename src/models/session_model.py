@@ -12,18 +12,21 @@ from utils.logger import log_debug
 SessionRow = sqlite3.Row
 
 
-def create_session(section_id: int) -> int:
+def create_session(section_id: int, date_override: Optional[str] = None) -> int:
     """
     Open a new active session for the given section at the current UTC time.
 
     Args:
-        section_id: FK reference to sections.id.
+        section_id:    FK reference to sections.id.
+        date_override: If provided, use this ISO date string instead of
+                       today's local calendar date (e.g. when creating a
+                       session for a past or future date).
 
     Returns:
         The auto-incremented id of the new session.
     """
     now_utc = datetime.now(timezone.utc)
-    date_str = datetime.now().date().isoformat()   # local calendar date
+    date_str = date_override or datetime.now().date().isoformat()
     start_time_str = now_utc.isoformat()           # UTC timestamp
 
     with get_connection() as conn:
@@ -119,4 +122,4 @@ def get_or_create_session(section_id: int, date: str) -> int:
     existing = get_existing_session_for_date(section_id, date)
     if existing is not None:
         return existing["id"]
-    return create_session(section_id)
+    return create_session(section_id, date_override=date)

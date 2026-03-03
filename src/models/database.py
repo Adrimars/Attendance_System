@@ -41,7 +41,7 @@ _APP_DIR = _get_app_dir()
 DB_PATH: str = str(_APP_DIR / "attendance.db")
 
 # ── Current schema version ────────────────────────────────────────────────────
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 # ── DDL statements ─────────────────────────────────────────────────────────────
 _DDL_SCHEMA_VERSION = """
@@ -262,9 +262,129 @@ def _run_migrations(cursor: sqlite3.Cursor, conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # Column already exists (e.g. fresh install ran the new DDL)
 
+    if stored_version < 3:
+        # v3: remove phantom duplicate sessions and consolidate attendance
+        _migrate_v3_deduplicate_sessions(cursor, conn)
+
     if stored_version < _SCHEMA_VERSION:
         cursor.execute(
             "UPDATE schema_version SET version = ?;", (_SCHEMA_VERSION,)
         )
         conn.commit()
         log_info(f"Migrated schema from v{stored_version} → v{_SCHEMA_VERSION}.")
+
+
+def _migrate_v3_deduplicate_sessions(
+    cursor: sqlite3.Cursor, conn: sqlite3.Connection
+) -> None:
+    """
+    Migration v2→v3: Remove phantom duplicate sessions.
+
+    The old create_session() always stored today's date instead of the
+    requested date, so get_or_create_session() kept creating new session
+    rows for the same (section_id, date).  This migration:
+
+    1. For every (section_id, date) group with >1 session, picks the
+       OLDEST session id as the canonical one.
+    2. Moves attendance records from duplicate sessions to the canonical
+       session.  If both the canonical and a duplicate have a record for
+       the same student, the most-recent one (by timestamp) wins and the
+       other is deleted.
+    3. Deletes the now-empty duplicate session rows.
+    """
+    try:
+        # Find all (section_id, date) groups that have more than one session
+        dup_groups = cursor.execute(
+            """
+            SELECT section_id, date, MIN(id) AS keep_id
+            FROM   sessions
+            GROUP  BY section_id, date
+            HAVING COUNT(*) > 1;
+            """
+        ).fetchall()
+
+        if not dup_groups:
+            log_info("Migration v2→v3: no duplicate sessions found — nothing to do.")
+            return
+
+        total_sessions_removed = 0
+        total_attendance_moved = 0
+        total_attendance_deleted = 0
+
+        for grp in dup_groups:
+            sec_id   = grp["section_id"]
+            date_str = grp["date"]
+            keep_id  = grp["keep_id"]
+
+            # Get all duplicate session ids (everything except the keeper)
+            dup_rows = cursor.execute(
+                """
+                SELECT id FROM sessions
+                WHERE  section_id = ? AND date = ? AND id != ?
+                ORDER  BY id;
+                """,
+                (sec_id, date_str, keep_id),
+            ).fetchall()
+            dup_ids = [r["id"] for r in dup_rows]
+
+            for dup_id in dup_ids:
+                # For each attendance record on the duplicate session,
+                # either move it to the keeper or delete it if the keeper
+                # already has a record for that student.
+                att_rows = cursor.execute(
+                    "SELECT id, student_id, status, method, timestamp "
+                    "FROM attendance WHERE session_id = ?;",
+                    (dup_id,),
+                ).fetchall()
+
+                for att in att_rows:
+                    # Does the keeper session already have a record for this student?
+                    existing = cursor.execute(
+                        "SELECT id, timestamp FROM attendance "
+                        "WHERE session_id = ? AND student_id = ?;",
+                        (keep_id, att["student_id"]),
+                    ).fetchone()
+
+                    if existing is None:
+                        # No collision — move the record to the keeper session
+                        cursor.execute(
+                            "UPDATE attendance SET session_id = ? WHERE id = ?;",
+                            (keep_id, att["id"]),
+                        )
+                        total_attendance_moved += 1
+                    else:
+                        # Collision — keep whichever has the latest timestamp
+                        if att["timestamp"] > existing["timestamp"]:
+                            # Duplicate's record is newer: delete keeper's, move dup's
+                            cursor.execute(
+                                "DELETE FROM attendance WHERE id = ?;",
+                                (existing["id"],),
+                            )
+                            cursor.execute(
+                                "UPDATE attendance SET session_id = ? WHERE id = ?;",
+                                (keep_id, att["id"]),
+                            )
+                            total_attendance_moved += 1
+                        else:
+                            # Keeper's record is newer (or equal): delete dup's
+                            cursor.execute(
+                                "DELETE FROM attendance WHERE id = ?;",
+                                (att["id"],),
+                            )
+                        total_attendance_deleted += 1
+
+                # Delete the now-empty duplicate session row
+                cursor.execute("DELETE FROM sessions WHERE id = ?;", (dup_id,))
+                total_sessions_removed += 1
+
+        conn.commit()
+        log_info(
+            f"Migration v2→v3: deduplicated {len(dup_groups)} session groups — "
+            f"removed {total_sessions_removed} phantom sessions, "
+            f"moved {total_attendance_moved} attendance records, "
+            f"deleted {total_attendance_deleted} conflicting duplicates."
+        )
+    except sqlite3.Error as exc:
+        conn.rollback()
+        log_error(f"Migration v2→v3 FAILED (rolled back): {exc}")
+        raise

@@ -656,11 +656,15 @@ def get_today_log() -> list[dict]:
 
 def push_summary_to_sheets(spreadsheet_url: str) -> tuple[bool, str]:
     """
-    Push a per-student attendance summary (attended/total format) to a dedicated
-    'Attendance Summary' worksheet in the given Google Spreadsheet.
+    Push a per-student attendance summary **with per-section breakdown** to a
+    Google Spreadsheet.
 
-    The worksheet is created if it does not already exist, and its contents are
-    **replaced** on every call.
+    Two worksheets are written:
+
+    1. **Attendance Summary** — one row per student with cumulative totals plus
+       one column per enrolled section showing ``attended/total`` for that
+       section.
+    2. (Legacy) Replaced on every call.
 
     Credentials are read from the ``google_credentials_path`` setting.
 
@@ -699,25 +703,61 @@ def push_summary_to_sheets(spreadsheet_url: str) -> tuple[bool, str]:
         try:
             ws = sh.worksheet("Attendance Summary")
         except gspread.exceptions.WorksheetNotFound:
-            ws = sh.add_worksheet(title="Attendance Summary", rows=1000, cols=10)
+            ws = sh.add_worksheet(title="Attendance Summary", rows=1000, cols=50)
 
         ws.clear()
 
-        data = attendance_model.get_total_attendance_per_student()
+        # ── Gather data ──────────────────────────────────────────────────
+        cumulative = attendance_model.get_total_attendance_per_student()
+        per_section = attendance_model.get_per_section_attendance_per_student()
+
+        # Build an ordered list of unique section names for dynamic columns
+        section_names_ordered: list[str] = []
+        section_names_set: set[str] = set()
+        for row in per_section:
+            sname = row["section_name"]
+            if sname not in section_names_set:
+                section_names_set.add(sname)
+                section_names_ordered.append(sname)
+
+        # Index per-section data by student_id → {section_name: summary}
+        student_section_map: dict[int, dict[str, str]] = {}
+        for row in per_section:
+            sid = row["student_id"]
+            if sid not in student_section_map:
+                student_section_map[sid] = {}
+            student_section_map[sid][row["section_name"]] = row["summary"]
+
+        # ── Build header ─────────────────────────────────────────────────
         header = ["First Name", "Last Name", "Card ID", "Total Attendance"]
+        for sname in section_names_ordered:
+            header.append(sname)
+
+        # ── Build rows ───────────────────────────────────────────────────
         rows_out = [header]
-        for student in data:
-            rows_out.append(
-                [
-                    student.get("first_name", ""),
-                    student.get("last_name", ""),
-                    student.get("card_id") or "",
-                    student.get("summary", "0/0"),
-                ]
-            )
+        for student in cumulative:
+            row_data = [
+                student.get("first_name", ""),
+                student.get("last_name", ""),
+                student.get("card_id") or "",
+                student.get("summary", "0/0"),
+            ]
+            sid = student.get("id")
+            sec_map = student_section_map.get(sid, {})
+            for sname in section_names_ordered:
+                row_data.append(sec_map.get(sname, "0/0"))
+            rows_out.append(row_data)
+
+        # Ensure worksheet has enough columns
+        needed_cols = len(header)
+        if ws.col_count < needed_cols:
+            ws.resize(cols=needed_cols)
 
         ws.update(rows_out, "A1")
-        info = f"Pushed {len(data)} students to Attendance Summary"
+        info = (
+            f"Pushed {len(cumulative)} students with "
+            f"{len(section_names_ordered)} section columns to Attendance Summary"
+        )
         log_info(f"push_summary_to_sheets: {info}")
         return True, info
     except Exception as exc:

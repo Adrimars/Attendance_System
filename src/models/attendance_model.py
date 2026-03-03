@@ -165,6 +165,10 @@ def get_today_attendance_with_details(today_date: str) -> list[dict]:
     Return all attendance records for the given date, enriched with student
     and section information.
 
+    If duplicate sessions exist for the same section+date, only the latest
+    attendance record (by timestamp) per student+section is returned so
+    each student appears at most once per section.
+
     Args:
         today_date: ISO-8601 date string, e.g. '2026-02-20'.
 
@@ -185,7 +189,9 @@ def get_today_attendance_with_details(today_date: str) -> list[dict]:
                    st.first_name,
                    st.last_name,
                    st.card_id,
-                   sec.name AS section_name
+                   sec.name AS section_name,
+                   a.student_id,
+                   sec.id   AS section_id
             FROM   attendance a
             JOIN   sessions   ses ON ses.id        = a.session_id
             JOIN   sections   sec ON sec.id        = ses.section_id
@@ -195,13 +201,26 @@ def get_today_attendance_with_details(today_date: str) -> list[dict]:
             """,
             (today_date,),
         ).fetchall()
-    return [dict(r) for r in rows]
+
+    # Deduplicate: keep only the first (latest by timestamp) per student+section
+    seen: set[tuple[int, int]] = set()
+    result: list[dict] = []
+    for r in rows:
+        key = (r["student_id"], r["section_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(dict(r))
+    return result
 
 
 def get_all_attendance_with_details() -> list[dict]:
     """
     Return every attendance record in the database, enriched with student,
     session date, and section information.
+
+    If duplicate sessions exist for the same section+date, only the latest
+    attendance record (by timestamp) per student+section+date is returned.
 
     Returns:
         List of dicts with keys:
@@ -221,7 +240,9 @@ def get_all_attendance_with_details() -> list[dict]:
                    st.last_name,
                    st.card_id,
                    sec.name AS section_name,
-                   ses.date
+                   ses.date,
+                   a.student_id,
+                   sec.id   AS section_id
             FROM   attendance a
             JOIN   sessions   ses ON ses.id  = a.session_id
             JOIN   sections   sec ON sec.id  = ses.section_id
@@ -229,7 +250,17 @@ def get_all_attendance_with_details() -> list[dict]:
             ORDER  BY a.timestamp DESC;
             """,
         ).fetchall()
-    return [dict(r) for r in rows]
+
+    # Deduplicate: keep only the latest record per student+section+date
+    seen: set[tuple[int, int, str]] = set()
+    result: list[dict] = []
+    for r in rows:
+        key = (r["student_id"], r["section_id"], r["date"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(dict(r))
+    return result
 
 
 def get_total_attendance_per_student() -> list[dict]:
@@ -255,8 +286,10 @@ def get_total_attendance_per_student() -> list[dict]:
                    s.first_name,
                    s.last_name,
                    s.card_id,
-                   COUNT(CASE WHEN a.status = 'Present' THEN 1 END) AS attended,
-                   COUNT(DISTINCT sess.id)                           AS total_sessions
+                   COUNT(DISTINCT CASE WHEN a.status = 'Present'
+                         THEN sess.section_id || '|' || sess.date END) AS attended,
+                   COUNT(DISTINCT CASE WHEN sess.date IS NOT NULL
+                         THEN sess.section_id || '|' || sess.date END) AS total_sessions
             FROM   students         s
             LEFT JOIN student_sections ss   ON ss.student_id   = s.id
             LEFT JOIN sessions         sess ON sess.section_id = ss.section_id
@@ -285,6 +318,64 @@ def get_total_attendance_per_student() -> list[dict]:
     return result
 
 
+def get_per_section_attendance_per_student() -> list[dict]:
+    """
+    Return per-student, per-section attendance breakdown.
+
+    Each row represents one student–section combination with:
+        student_id, first_name, last_name, card_id,
+        section_id, section_name, section_day, section_time,
+        attended       — count of 'Present' records for the student in that section,
+        total_sessions — count of distinct sessions for that section,
+        summary        — formatted "<attended>/<total_sessions>"
+
+    Ordered by student last_name, first_name, then section name.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.id             AS student_id,
+                   s.first_name,
+                   s.last_name,
+                   s.card_id,
+                   sec.id           AS section_id,
+                   sec.name         AS section_name,
+                   sec.day          AS section_day,
+                   sec.time         AS section_time,
+                   COUNT(DISTINCT CASE WHEN a.status = 'Present'
+                         THEN sess.date END)                         AS attended,
+                   COUNT(DISTINCT sess.date)                         AS total_sessions
+            FROM   students          s
+            JOIN   student_sections   ss   ON ss.student_id   = s.id
+            JOIN   sections           sec  ON sec.id          = ss.section_id
+            LEFT JOIN sessions        sess ON sess.section_id = sec.id
+            LEFT JOIN attendance      a    ON a.student_id    = s.id
+                                          AND a.session_id    = sess.id
+            GROUP  BY s.id, sec.id
+            ORDER  BY s.last_name, s.first_name, sec.name;
+            """,
+        ).fetchall()
+
+    result: list[dict] = []
+    for row in rows:
+        attended = row["attended"] or 0
+        total = row["total_sessions"] or 0
+        result.append({
+            "student_id":    row["student_id"],
+            "first_name":    row["first_name"],
+            "last_name":     row["last_name"],
+            "card_id":       row["card_id"],
+            "section_id":    row["section_id"],
+            "section_name":  row["section_name"],
+            "section_day":   row["section_day"],
+            "section_time":  row["section_time"],
+            "attended":      attended,
+            "total_sessions": total,
+            "summary":       f"{attended}/{total}",
+        })
+    return result
+
+
 def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
     """
     Return (attended, total_sessions) for a single student.
@@ -296,8 +387,10 @@ def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
         row = conn.execute(
             """
             SELECT
-                COUNT(CASE WHEN a.status = 'Present' THEN 1 END) AS attended,
-                COUNT(DISTINCT sess.id)                           AS total_sessions
+                COUNT(DISTINCT CASE WHEN a.status = 'Present'
+                      THEN ss.section_id || '|' || sess.date END) AS attended,
+                COUNT(DISTINCT CASE WHEN sess.date IS NOT NULL
+                      THEN ss.section_id || '|' || sess.date END) AS total_sessions
             FROM   student_sections ss
             LEFT JOIN sessions     sess ON sess.section_id = ss.section_id
             LEFT JOIN attendance   a    ON a.student_id    = ?
@@ -316,8 +409,10 @@ def get_section_attendance_on_date(section_id: int, date_str: str) -> list[dict]
     Return attendance data for every enrolled student in a given section on a
     specific date.
 
-    For each enrolled student, includes their attendance status on that date
-    (Present, Absent, or None if no session/record exists).
+    For each enrolled student, includes their *final* attendance status on that
+    date (Present, Absent, or None if no session/record exists).  If multiple
+    sessions exist for the same section+date (legacy data), the most-recent
+    attendance record (by timestamp) is used so each student appears only once.
 
     Returns:
         List of dicts with keys:
@@ -340,17 +435,30 @@ def get_section_attendance_on_date(section_id: int, date_str: str) -> list[dict]
             LEFT JOIN attendance a    ON a.session_id = sess.id
                                       AND a.student_id = st.id
             WHERE  ss.section_id = ?
-            ORDER  BY st.last_name, st.first_name;
+            ORDER  BY st.last_name, st.first_name, a.timestamp DESC;
             """,
             (date_str, section_id),
         ).fetchall()
-    return [dict(r) for r in rows]
+
+    # Deduplicate: keep only the first (latest by timestamp) row per student
+    seen: set[int] = set()
+    result: list[dict] = []
+    for r in rows:
+        sid = r["student_id"]
+        if sid in seen:
+            continue
+        seen.add(sid)
+        result.append(dict(r))
+    return result
 
 
 def get_full_section_attendance(section_id: int) -> list[dict]:
     """
     Return comprehensive attendance data for all students enrolled in a section
     across ALL dates/sessions ever recorded for that section.
+
+    If duplicate sessions exist for the same section+date, only the latest
+    attendance record (by timestamp) per student per date is kept.
 
     Returns:
         List of dicts with keys:
@@ -375,11 +483,21 @@ def get_full_section_attendance(section_id: int) -> list[dict]:
             LEFT JOIN attendance a    ON a.session_id = sess.id
                                       AND a.student_id = st.id
             WHERE  ss.section_id = ?
-            ORDER  BY st.last_name, st.first_name, sess.date DESC;
+            ORDER  BY st.last_name, st.first_name, sess.date DESC, a.timestamp DESC;
             """,
             (section_id,),
         ).fetchall()
-    return [dict(r) for r in rows]
+
+    # Deduplicate: keep only the first (latest by timestamp) row per (student, date)
+    seen: set[tuple[int, str | None]] = set()
+    result: list[dict] = []
+    for r in rows:
+        key = (r["student_id"], r["session_date"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(dict(r))
+    return result
 
 
 def get_section_session_dates(section_id: int) -> list[str]:
@@ -405,25 +523,44 @@ def get_consecutive_recent_absences(student_id: int) -> int:
     Counts backwards from the newest session and stops the moment a 'Present'
     record is found, returning the number of consecutive non-present sessions.
 
+    Duplicate sessions for the same section+date are collapsed so they count
+    as one calendar event.
+
     Returns 0 if the student has no sessions or their last session was 'Present'.
     """
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT COALESCE(a.status, 'Absent') AS status
+            SELECT sess.section_id,
+                   sess.date,
+                   COALESCE(a.status, 'Absent') AS status,
+                   a.timestamp
             FROM   student_sections ss
             JOIN   sessions         sess ON sess.section_id = ss.section_id
             LEFT JOIN attendance    a    ON a.session_id    = sess.id
                                         AND a.student_id    = ss.student_id
             WHERE  ss.student_id = ?
-            ORDER  BY sess.date DESC, sess.id DESC;
+            ORDER  BY sess.date DESC, a.timestamp DESC;
             """,
             (student_id,),
         ).fetchall()
 
-    count = 0
+    # Deduplicate: keep only the latest record per (section, date)
+    seen: set[tuple[int, str]] = set()
+    deduped: list[dict] = []
     for row in rows:
-        if row["status"] == "Present":
+        key = (row["section_id"], row["date"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({"status": row["status"], "date": row["date"]})
+
+    # Sort newest-first by date (may have mixed sections)
+    deduped.sort(key=lambda r: r["date"], reverse=True)
+
+    count = 0
+    for rec in deduped:
+        if rec["status"] == "Present":
             break
         count += 1
     return count

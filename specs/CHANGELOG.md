@@ -6,6 +6,15 @@ or duplicating completed work.
 
 ---
 
+## Documentation Refresh (2026-03-02)
+
+| What was updated | Where |
+|------------------|-------|
+| PRD refreshed to v1.2 with current scope and roadmap snapshot | `specs/prd/PRD-rfid-attendance-system.md` |
+| Agent guidelines aligned to current architecture and constraints | `specs/agents.md` |
+| Implementation plan updated with Phase 6-8 roadmap | `specs/plan.md` |
+| Current state and changelog aligned to latest docs | `specs/CURRENT_STATE.md`, `specs/CHANGELOG.md` |
+
 ## Phase 1 — MVP Core (completed)
 
 All of the following are **done and working**. Do not recreate them.
@@ -131,7 +140,7 @@ All tab `__init__` signatures changed from `parent: ctk.CTkFrame, root: ctk.CTk`
 ## Invariants — Things That Must Never Change
 
 - `get_connection()` must be the only way to open DB connections.
-- PIN always stored as `hashlib.sha256(pin.encode()).hexdigest()` in settings key `admin_pin`.
+- PIN stored as PBKDF2-HMAC-SHA256 salted hash via `utils/pin_utils.py` under settings key `admin_pin` (format: `salt_hex$hash_hex`). Legacy SHA-256 hashes are verified transparently.
 - Views must never import from `models.*` directly (only from `controllers.*`).  
   Only exception: `settings_tab._perform_backup()` reads `models.database.DB_PATH`.
 - `student_edit_dialog.py` uses `student_ctrl.get_enrolled_section_ids()` — NOT `models.student_model.get_sections_for_student()` directly.
