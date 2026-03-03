@@ -76,5 +76,6 @@ git checkout main
 
 | Date       | Commit (main)  | Description |
 |------------|----------------|-------------|
+| 2026-03-04 | `6d02ca3`      | feat: exclude low-attendance sessions (<10%) from reports and aggregates |
 | 2026-03-04 | `3a0ea8f`      | fix: phantom session cleanup, minimize button, report dedup, Sheets per-section export |
 | 2026-03-01 | `e8ffb07`      | feat: name-surname display order, Turkish character support in PDFs and search |
