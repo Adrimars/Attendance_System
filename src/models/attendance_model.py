@@ -421,6 +421,50 @@ def get_student_attendance_summary(student_id: int) -> tuple[int, int]:
     return (row["attended"] or 0), (row["total_sessions"] or 0)
 
 
+def get_per_section_attendance_summary(
+    student_id: int,
+    section_ids: list[int],
+) -> list[dict]:
+    """
+    Return per-section attendance summary for a student, restricted to the
+    given section IDs, in the same order they are provided.
+
+    Low-attendance sessions (<10 % of enrolled students present) are excluded
+    from the total count but the student is still marked Present in them.
+
+    Returns:
+        List of dicts (one per section_id found in DB):
+            section_id, section_name, attended, total
+    """
+    if not section_ids:
+        return []
+    placeholders = ",".join("?" * len(section_ids))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                sec.id   AS section_id,
+                sec.name AS section_name,
+                COUNT(DISTINCT CASE WHEN a.status = 'Present'
+                      THEN sess.date END) AS attended,
+                COUNT(DISTINCT CASE WHEN sess.date IS NOT NULL
+                      THEN sess.date END) AS total
+            FROM   sections         sec
+            JOIN   student_sections ss   ON ss.section_id = sec.id
+                                        AND ss.student_id = ?
+            LEFT JOIN sessions      sess ON sess.section_id = sec.id
+                                        AND sess.id NOT IN ({_LOW_ATTENDANCE_SUBQUERY})
+            LEFT JOIN attendance    a    ON a.student_id   = ?
+                                        AND a.session_id   = sess.id
+            WHERE  sec.id IN ({placeholders})
+            GROUP  BY sec.id, sec.name;
+            """,
+            (student_id, student_id, *section_ids),
+        ).fetchall()
+    rows_by_id = {r["section_id"]: dict(r) for r in rows}
+    return [rows_by_id[sid] for sid in section_ids if sid in rows_by_id]
+
+
 def get_section_attendance_on_date(section_id: int, date_str: str) -> list[dict]:
     """
     Return attendance data for every enrolled student in a given section on a

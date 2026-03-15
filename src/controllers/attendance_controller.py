@@ -339,6 +339,16 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
             else:
                 already_marked.append(sec["name"])
 
+        # Build per-section display: "Technical (1/2) / Intermediate (2/2)"
+        today_sec_ids = [sec["id"] for sec in sections_today]
+        per_section = attendance_model.get_per_section_attendance_summary(
+            student_id, today_sec_ids
+        )
+        section_display = " / ".join(
+            f"{r['section_name']} ({r['attended']}/{r['total']})"
+            for r in per_section
+        ) or "—"
+
         if newly_marked:
             log_info(
                 f"Passive tap OK: student_id={student_id} "
@@ -347,10 +357,7 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
             result_type = TapResultType.KNOWN_PRESENT
             # Re-fetch summary AFTER marking so the count reflects this tap
             attended_now, total_now = attendance_model.get_student_attendance_summary(student_id)
-            message = (
-                f"{first_name} {last_name} — present: {', '.join(newly_marked)} "
-                f"| {attended_now}/{total_now} sessions"
-            )
+            message = section_display
             # Student just attended — re-evaluate inactive status (may become active again)
             _refresh_inactive_status_for(student_id)
             _refreshed = student_model.get_student_by_id(student_id)
@@ -362,10 +369,7 @@ def process_rfid_passive(card_id: str) -> PassiveTapResult:
             )
             result_type = TapResultType.DUPLICATE_TAP
             attended_now, total_now = attendance_model.get_student_attendance_summary(student_id)
-            message = (
-                f"{first_name} {last_name} already marked today: "
-                f"{', '.join(already_marked)}"
-            )
+            message = section_display
 
         return PassiveTapResult(
             result_type=result_type,
