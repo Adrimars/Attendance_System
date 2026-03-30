@@ -14,12 +14,15 @@ AttendanceRow = sqlite3.Row
 # ── Low-attendance session filter ─────────────────────────────────────────────
 # Sessions where fewer than 10 % of enrolled students attended are treated as
 # accidental / phantom sessions and excluded from reports and aggregate counts.
+# Active (in-progress) sessions are never excluded — students may still be
+# scanning their cards, so the count is not yet final.
 _LOW_ATTENDANCE_SUBQUERY = """
     SELECT _s.id
     FROM   sessions          _s
     JOIN   student_sections  _ss ON _ss.section_id = _s.section_id
     LEFT JOIN attendance     _a  ON _a.session_id  = _s.id
                                 AND _a.status      = 'Present'
+    WHERE  _s.status != 'active'
     GROUP  BY _s.id
     HAVING CAST(COUNT(DISTINCT _a.student_id) AS REAL)
            < 0.10 * COUNT(DISTINCT _ss.student_id)
