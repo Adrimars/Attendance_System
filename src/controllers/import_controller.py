@@ -1,18 +1,26 @@
 """
 import_controller.py — Legacy Google Sheets import controller (Phase 2, Task 2.7).
 
-Reads a legacy attendance Google Sheet with the following column structure:
-  • name            — full name  OR  first_name + last_name  columns
-  • rfid            — RFID card ID (may be empty)
-  • D_YYYY_MM_DD    — one column per session date; value "1" or non-empty = attended
+Reads data from TWO kinds of tabs inside the same Google Sheet:
+
+1. Attendance tab (first tab, e.g. "Sayfa1") — full attendance history:
+     • name            — full name  OR  first_name + last_name  columns
+     • rfid            — RFID card ID (may be empty)
+     • D_YYYY_MM_DD    — one column per session date; value "1" or non-empty = attended
+
+2. Registration-form tab (a tab whose title contains "Kayıt Formu Sonuçları",
+   typically the 3rd tab) — Google Forms responses. Only the
+   "Adınız - Soyadınız (Name - Surname)" column is used; these are new sign-ups
+   with no RFID and no attendance history yet.
 
 Import rules (per spec, FR-2.7 / FR-2.8):
-  • Count the number of D_ columns where the student has a non-empty / truthy value
-    to get their total attendance.
-  • Exclude students whose attendance count is below the threshold AND who have
-    no RFID card assigned (they will never be able to tap in).
-  • Include all students who have an RFID card (regardless of attendance count).
-  • Include all students who have met/exceeded the threshold.
+  • Attendance-tab rows: count the number of D_ columns where the student has a
+    non-empty / truthy value to get their total attendance, and only include
+    rows meeting/exceeding the threshold.
+  • Registration-form rows: always included (they bypass the threshold, since
+    they legitimately have 0 attendance and no RFID yet). Duplicate names are
+    allowed for these rows — the same person may appear on both tabs, and the
+    form may list the same name more than once.
 
 Two-phase API:
   1. preview_import(sheet_url, threshold, credentials_path) → ImportPreview
@@ -45,6 +53,8 @@ class ImportStudentRow:
     card_id: Optional[str]          # None / "" if not present in sheet
     attendance_count: int           # number of D_ columns with a truthy value
     include: bool                   # will be imported if True
+    from_form: bool = False         # True = came from the registration-form tab
+                                    # (always inserted; duplicate names allowed)
 
 
 @dataclass
@@ -53,13 +63,14 @@ class ImportPreview:
     Summary and row list returned by preview_import().
 
     Fields:
-        sheet_title:       Name of the Google Sheet tab.
-        total_rows:        Total rows parsed from the sheet (excl. header).
+        sheet_title:       Name of the attendance tab that was read.
+        total_rows:        Total rows parsed from both tabs (excl. headers).
         with_rfid:         Rows that have a non-empty rfid column.
         without_rfid:      Rows that have no rfid column value.
-        session_count:     Number of D_ date columns found.
+        session_count:     Number of D_ date columns found (attendance tab).
         will_import:       Rows that pass the threshold/RFID filter.
         will_skip:         Rows that fail the filter.
+        form_rows:         Rows sourced from the registration-form tab.
         students:          Full list (ImportStudentRow) for display.
         error:             Non-None if a non-fatal warning occurred.
     """
@@ -70,8 +81,94 @@ class ImportPreview:
     session_count: int
     will_import: int
     will_skip: int
+    form_rows: int = 0
     students: list[ImportStudentRow] = field(default_factory=list)
     error: Optional[str] = None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Registration-form tab helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+# The registration-form tab is identified by a substring of its title, not its
+# exact name — real tabs are named like "26-27 Kayıt Formu Sonuçları" where the
+# numeric prefix (the school-year) changes each year.
+_FORM_TAB_MARKER = "kayıt formu sonuçları"
+
+
+def _find_form_worksheet(spreadsheet):
+    """Return the first worksheet whose title contains the registration-form
+    marker, or None if no such tab exists."""
+    for ws in spreadsheet.worksheets():
+        if _FORM_TAB_MARKER in turkish_lower(ws.title):
+            return ws
+    return None
+
+
+def _find_form_name_key(header_keys) -> Optional[str]:
+    """Locate the "Adınız - Soyadınız (Name - Surname)" column key.
+
+    Matches on a Turkish-lowered substring so trailing spaces / minor wording
+    differences don't break it. Prefers the Turkish label, falls back to the
+    English "name - surname" wording.
+    """
+    for key in header_keys:
+        low = turkish_lower(str(key))
+        if "adınız" in low and "soyadınız" in low:
+            return key
+    for key in header_keys:
+        low = turkish_lower(str(key))
+        if "name - surname" in low:
+            return key
+    return None
+
+
+def _parse_form_rows(ws) -> tuple[list[ImportStudentRow], Optional[str]]:
+    """Parse name-only rows from the registration-form worksheet.
+
+    Returns (rows, warning). ``warning`` is non-None when the tab was found but
+    could not be parsed (bad column, read error) — the caller treats this as a
+    non-fatal soft warning and continues with the attendance tab only.
+    """
+    try:
+        records = ws.get_all_records(default_blank="")
+    except Exception as exc:  # noqa: BLE001
+        log_warning(f"import_controller: could not read form tab — {exc}")
+        return [], f"Could not read the '{ws.title}' tab: {exc}"
+
+    if not records:
+        return [], None
+
+    name_key = _find_form_name_key(records[0].keys())
+    if name_key is None:
+        log_warning(
+            f"import_controller: form tab '{ws.title}' has no "
+            f"'Adınız - Soyadınız' column"
+        )
+        return [], (
+            f"The '{ws.title}' tab has no "
+            f"'Adınız - Soyadınız (Name - Surname)' column — it was skipped."
+        )
+
+    rows: list[ImportStudentRow] = []
+    for row in records:
+        full = str(row.get(name_key, "")).strip()
+        if not full:
+            continue  # skip blank responses
+        parts = full.split(None, 1)
+        first = parts[0]
+        last = parts[1] if len(parts) > 1 else ""
+        rows.append(
+            ImportStudentRow(
+                first_name=first,
+                last_name=last,
+                card_id=None,
+                attendance_count=0,
+                include=True,       # registration rows always import
+                from_form=True,
+            )
+        )
+    return rows, None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -210,6 +307,20 @@ def preview_import(
             )
         )
 
+    # ── Parse the registration-form tab (names only), if present ──────────────
+    # Attendance-tab rows come first so their duplicate-skip logic at commit
+    # time is preserved; form rows are appended and always inserted.
+    form_warning: Optional[str] = None
+    form_ws = _find_form_worksheet(spreadsheet)
+    if form_ws is not None:
+        form_rows_parsed, form_warning = _parse_form_rows(form_ws)
+        parsed.extend(form_rows_parsed)
+        log_info(
+            f"Import preview: form tab='{form_ws.title}' "
+            f"rows={len(form_rows_parsed)}"
+        )
+
+    form_rows    = sum(1 for r in parsed if r.from_form)
     with_rfid    = sum(1 for r in parsed if r.card_id)
     without_rfid = len(parsed) - with_rfid
     will_import  = sum(1 for r in parsed if r.include)
@@ -217,7 +328,8 @@ def preview_import(
 
     log_info(
         f"Import preview: sheet='{sheet_title}' "
-        f"rows={len(parsed)} will_import={will_import} will_skip={will_skip}"
+        f"rows={len(parsed)} form_rows={form_rows} "
+        f"will_import={will_import} will_skip={will_skip}"
     )
 
     return ImportPreview(
@@ -228,7 +340,9 @@ def preview_import(
         session_count=len(date_col_keys),
         will_import=will_import,
         will_skip=will_skip,
+        form_rows=form_rows,
         students=parsed,
+        error=form_warning,
     ), ""
 
 
@@ -279,21 +393,26 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
             for row in to_import:
                 name_key = (turkish_lower(row.first_name), turkish_lower(row.last_name))
 
-                if name_key in known_names:
-                    log_warning(
-                        f"Import skip (name exists): "
-                        f"'{row.first_name} {row.last_name}'"
-                    )
-                    skipped += 1
-                    continue
+                # Registration-form rows are always inserted — duplicate names
+                # are expected (same person on both tabs, or the form listing a
+                # name twice). Their names are NOT added to known_names, so they
+                # never block an attendance-tab row for the same person.
+                if not row.from_form:
+                    if name_key in known_names:
+                        log_warning(
+                            f"Import skip (name exists): "
+                            f"'{row.first_name} {row.last_name}'"
+                        )
+                        skipped += 1
+                        continue
 
-                if row.card_id and row.card_id in known_cards:
-                    log_warning(
-                        f"Import skip (card taken): "
-                        f"'{row.first_name} {row.last_name}' card='{row.card_id}'"
-                    )
-                    skipped += 1
-                    continue
+                    if row.card_id and row.card_id in known_cards:
+                        log_warning(
+                            f"Import skip (card taken): "
+                            f"'{row.first_name} {row.last_name}' card='{row.card_id}'"
+                        )
+                        skipped += 1
+                        continue
 
                 created_at = datetime.now(timezone.utc).isoformat()
                 conn.execute(
@@ -304,12 +423,14 @@ def commit_import(preview: ImportPreview) -> tuple[int, int, str]:
                     (row.first_name, row.last_name, row.card_id, created_at),
                 )
 
-                # Update in-memory sets so later rows in the same batch see
-                # the newly inserted student (avoids inserting duplicates
-                # within a single import run).
-                known_names.add(name_key)
-                if row.card_id:
-                    known_cards.add(row.card_id)
+                # Update in-memory sets so later attendance-tab rows in the same
+                # batch see the newly inserted student (avoids inserting
+                # duplicates within a single import run). Form rows are excluded
+                # so they can never block a real attendance record.
+                if not row.from_form:
+                    known_names.add(name_key)
+                    if row.card_id:
+                        known_cards.add(row.card_id)
                 imported += 1
 
     except sqlite3.Error as exc:

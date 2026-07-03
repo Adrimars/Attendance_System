@@ -121,7 +121,7 @@ class ImportPreviewDialog(ctk.CTkToplevel):
 
         self._summary_labels: dict[str, ctk.CTkLabel] = {}
         for key in ("Total rows", "With RFID", "Without RFID",
-                    "Sessions found", "Will import", "Will skip"):
+                    "Sessions found", "From form", "Will import", "Will skip"):
             col = ctk.CTkFrame(self._summary_frame, fg_color="#1e1e35", corner_radius=6)
             col.pack(side="left", padx=4)
             ctk.CTkLabel(
@@ -227,16 +227,24 @@ class ImportPreviewDialog(ctk.CTkToplevel):
         self._preview = preview
         self._populate_results(preview)
 
+        # A non-fatal warning (e.g. the registration-form tab was found but its
+        # name column was missing) is appended so the user is aware the form
+        # data may not have been included.
+        warn_suffix = f"  ⚠ {preview.error}" if preview.error else ""
+
         if preview.will_import == 0:
             self._status.configure(
-                text="No students meet the import criteria.",
+                text=f"No students meet the import criteria.{warn_suffix}",
                 text_color="#f59e0b",
             )
             self._confirm_btn.configure(state="disabled")
         else:
             self._status.configure(
-                text=f"✓ Preview ready — {preview.will_import} student(s) will be imported.",
-                text_color="#4ade80",
+                text=(
+                    f"✓ Preview ready — {preview.will_import} student(s) will be "
+                    f"imported.{warn_suffix}"
+                ),
+                text_color="#4ade80" if not preview.error else "#f59e0b",
             )
             self._confirm_btn.configure(state="normal")
 
@@ -247,6 +255,7 @@ class ImportPreviewDialog(ctk.CTkToplevel):
             "With RFID":     str(preview.with_rfid),
             "Without RFID":  str(preview.without_rfid),
             "Sessions found": str(preview.session_count),
+            "From form":     str(preview.form_rows),
             "Will import":   str(preview.will_import),
             "Will skip":     str(preview.will_skip),
         }
