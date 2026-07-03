@@ -76,6 +76,7 @@ git checkout main
 
 | Date       | Commit (main)  | Description |
 |------------|----------------|-------------|
+| 2026-07-03 | `eebb7a3`      | feat: multi-page Sheets import — reads names from the "Kayıt Formu Sonuçları" registration tab alongside Sayfa1 in one run; form names always import and allow duplicates |
 | 2026-03-30 | `33a5868`      | fix: exclude active sessions from low-attendance filter so today's session appears in reports and card scan display |
 | 2026-03-15 | `259f622`      | feat: per-section attendance breakdown in flash banner (e.g. Technical (1/2) / Intermediate (2/2)) |
 | 2026-03-04 | `6d02ca3`      | feat: exclude low-attendance sessions (<10%) from reports and aggregates |
